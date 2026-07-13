@@ -1,6 +1,18 @@
 # SFTPGo
 
-[![CI Status](https://github.com/drakkan/sftpgo/workflows/CI/badge.svg)](https://github.com/drakkan/sftpgo/workflows/CI/badge.svg)
+> [!NOTE]
+> **Unofficial fork.** This repository is a personal fork of
+> [drakkan/sftpgo](https://github.com/drakkan/sftpgo) that adds three additive,
+> backward-compatible features to the end-user WebClient file browser
+> (drag-and-drop move, recursive search, and photo/video thumbnails + grid view).
+> See **[FORK_FEATURES.md](FORK_FEATURES.md)** for what changed and
+> **[NOTICE.md](NOTICE.md)** for attribution, licensing, and disclaimers.
+>
+> It is **not affiliated with, endorsed by, or supported by** the SFTPGo project
+> or SFTPGo S.r.l. "SFTPGo" is a trademark of its owner. For official releases,
+> support, and the Enterprise edition, use the upstream project. This fork is
+> provided **as-is, with no warranty** (see the GNU AGPL-3.0, sections 15–16).
+
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go)
 

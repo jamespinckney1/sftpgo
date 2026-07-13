@@ -74,3 +74,11 @@ All keys are optional; thumbnails are enabled by default.
 
 Every key can also be set via environment variable, e.g.
 `SFTPGO_HTTPD__THUMBNAILS__ENABLED=false`.
+
+## License & attribution
+
+This is an unofficial fork of [drakkan/sftpgo](https://github.com/drakkan/sftpgo),
+distributed under the same **AGPL-3.0-only** license, and is not affiliated with or
+endorsed by the SFTPGo project. See [NOTICE.md](NOTICE.md) for full attribution,
+licensing (including the KeenThemes WebUI template terms), trademark, and
+no-warranty details.
