@@ -180,6 +180,8 @@ const (
 	webClientFilesPath             = "/web/client/files"
 	webClientEditFilePath          = "/web/client/editfile"
 	webClientDirsPath              = "/web/client/dirs"
+	webClientSearchPath            = "/web/client/search"
+	webClientThumbnailPath         = "/web/client/thumbnail"
 	webClientDownloadZipPath       = "/web/client/downloadzip"
 	webChangeClientPwdPath         = "/web/client/changepwd"
 	webClientProfilePath           = "/web/client/profile"
@@ -18047,6 +18049,172 @@ func TestWebGetFiles(t *testing.T) {
 	setBearerForReq(req, webAPIToken)
 	rr = executeRequest(req)
 	checkResponseCode(t, http.StatusForbidden, rr)
+
+	_, err = httpdtest.RemoveUser(user, http.StatusOK)
+	assert.NoError(t, err)
+	err = os.RemoveAll(user.GetHomeDir())
+	assert.NoError(t, err)
+}
+
+func TestWebClientSearch(t *testing.T) {
+	user, _, err := httpdtest.AddUser(getTestUser(), http.StatusCreated)
+	assert.NoError(t, err)
+
+	// Build a small nested tree:
+	//   /docs/report_final.txt, /docs/notes.txt
+	//   /images/photo1.jpg, /images/photo2.png, /images/nested/photo3.jpg
+	//   /report_top.txt
+	home := user.GetHomeDir()
+	for _, d := range []string{"docs", "images", filepath.Join("images", "nested")} {
+		err = os.MkdirAll(filepath.Join(home, d), os.ModePerm)
+		assert.NoError(t, err)
+	}
+	files := []string{
+		filepath.Join("docs", "report_final.txt"),
+		filepath.Join("docs", "notes.txt"),
+		filepath.Join("images", "photo1.jpg"),
+		filepath.Join("images", "photo2.png"),
+		filepath.Join("images", "nested", "photo3.jpg"),
+		"report_top.txt",
+	}
+	for _, f := range files {
+		err = os.WriteFile(filepath.Join(home, f), []byte("data"), os.ModePerm)
+		assert.NoError(t, err)
+	}
+
+	webToken, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	assert.NoError(t, err)
+
+	// doSearch runs a recursive search and returns the decoded result rows.
+	doSearch := func(startPath, q string) []map[string]any {
+		reqURL := webClientSearchPath + "?path=" + url.QueryEscape(startPath) + "&q=" + url.QueryEscape(q)
+		req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+		setJWTCookieForReq(req, webToken)
+		rr := executeRequest(req)
+		checkResponseCode(t, http.StatusOK, rr)
+		var results []map[string]any
+		err := json.Unmarshal(rr.Body.Bytes(), &results)
+		assert.NoError(t, err)
+		return results
+	}
+	names := func(results []map[string]any) []string {
+		out := make([]string, 0, len(results))
+		for _, r := range results {
+			out = append(out, fmt.Sprintf("%v", r["name"]))
+		}
+		return out
+	}
+
+	// Case-insensitive substring match, recursive from root.
+	results := doSearch("/", "REPORT")
+	assert.ElementsMatch(t, []string{"report_final.txt", "report_top.txt"}, names(results))
+	// Every hit must carry its parent directory in the "path" field.
+	for _, r := range results {
+		assert.Contains(t, r, "path")
+		assert.NotEmpty(t, r["path"])
+	}
+
+	// Wildcard (glob) match, recursive, including a deeply nested file.
+	results = doSearch("/", "*.jpg")
+	assert.ElementsMatch(t, []string{"photo1.jpg", "photo3.jpg"}, names(results))
+
+	// Single-char wildcard.
+	results = doSearch("/", "photo?.png")
+	assert.ElementsMatch(t, []string{"photo2.png"}, names(results))
+
+	// A matching directory name is returned as a folder row (type "1") with dir_path.
+	results = doSearch("/", "nested")
+	if assert.Len(t, results, 1) {
+		assert.Equal(t, "nested", results[0]["name"])
+		assert.Equal(t, "1", results[0]["type"])
+		assert.Contains(t, results[0], "dir_path")
+	}
+
+	// Scoped search: starting under /images must not reach /docs or the root file.
+	results = doSearch("/images", "*.jpg")
+	assert.ElementsMatch(t, []string{"photo1.jpg", "photo3.jpg"}, names(results))
+	results = doSearch("/images", "report")
+	assert.Empty(t, results)
+
+	// Empty query and no-match both return an empty array.
+	results = doSearch("/", "")
+	assert.Empty(t, results)
+	results = doSearch("/", "does-not-exist")
+	assert.Empty(t, results)
+
+	// Unauthenticated requests are redirected to the login page by the shared
+	// WebClient auth middleware.
+	req, _ := http.NewRequest(http.MethodGet, webClientSearchPath+"?path=/&q=report", nil)
+	rr := executeRequest(req)
+	checkResponseCode(t, http.StatusFound, rr)
+
+	_, err = httpdtest.RemoveUser(user, http.StatusOK)
+	assert.NoError(t, err)
+	err = os.RemoveAll(user.GetHomeDir())
+	assert.NoError(t, err)
+}
+
+func TestWebClientThumbnail(t *testing.T) {
+	user, _, err := httpdtest.AddUser(getTestUser(), http.StatusCreated)
+	assert.NoError(t, err)
+
+	// Write a real PNG so the thumbnailer has something to decode, plus a
+	// non-image file and a directory to exercise the rejection paths.
+	err = os.MkdirAll(user.GetHomeDir(), os.ModePerm)
+	assert.NoError(t, err)
+	var pngBuf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	for y := 0; y < 480; y++ {
+		for x := 0; x < 640; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 120, A: 255})
+		}
+	}
+	err = png.Encode(&pngBuf, img)
+	assert.NoError(t, err)
+	err = os.WriteFile(filepath.Join(user.GetHomeDir(), "pic.png"), pngBuf.Bytes(), os.ModePerm)
+	assert.NoError(t, err)
+	err = os.WriteFile(filepath.Join(user.GetHomeDir(), "note.txt"), []byte("hello"), os.ModePerm)
+	assert.NoError(t, err)
+	err = os.MkdirAll(filepath.Join(user.GetHomeDir(), "adir"), os.ModePerm)
+	assert.NoError(t, err)
+
+	webToken, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	assert.NoError(t, err)
+
+	// A valid image produces a JPEG thumbnail with an ETag.
+	req, _ := http.NewRequest(http.MethodGet, webClientThumbnailPath+"?path="+url.QueryEscape("/pic.png"), nil)
+	setJWTCookieForReq(req, webToken)
+	rr := executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Equal(t, "image/jpeg", rr.Header().Get("Content-Type"))
+	etag := rr.Header().Get("ETag")
+	assert.NotEmpty(t, etag)
+	// The response body must be a non-empty JPEG (starts with the SOI marker).
+	body := rr.Body.Bytes()
+	if assert.GreaterOrEqual(t, len(body), 2) {
+		assert.Equal(t, []byte{0xFF, 0xD8}, body[:2])
+	}
+
+	// A conditional request with the same ETag is answered with 304.
+	req, _ = http.NewRequest(http.MethodGet, webClientThumbnailPath+"?path="+url.QueryEscape("/pic.png"), nil)
+	setJWTCookieForReq(req, webToken)
+	req.Header.Set("If-None-Match", etag)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusNotModified, rr)
+
+	// Non-image files, directories, the root and missing files are all rejected
+	// so the WebClient falls back to a generic icon.
+	for _, p := range []string{"/note.txt", "/adir", "/", "/missing.png"} {
+		req, _ = http.NewRequest(http.MethodGet, webClientThumbnailPath+"?path="+url.QueryEscape(p), nil)
+		setJWTCookieForReq(req, webToken)
+		rr = executeRequest(req)
+		checkResponseCode(t, http.StatusNotFound, rr)
+	}
+
+	// Unauthenticated requests are redirected to the login page.
+	req, _ = http.NewRequest(http.MethodGet, webClientThumbnailPath+"?path="+url.QueryEscape("/pic.png"), nil)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusFound, rr)
 
 	_, err = httpdtest.RemoveUser(user, http.StatusOK)
 	assert.NoError(t, err)
