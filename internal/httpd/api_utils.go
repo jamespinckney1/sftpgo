@@ -565,7 +565,17 @@ func downloadFile(w http.ResponseWriter, r *http.Request, connection *Connection
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 	} else {
 		w.Header().Set("Content-Type", ctype)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(name)))
+		if serveInlineMedia(r, name) {
+			// Serve known-safe media (raster images / video / audio, never SVG or
+			// other potentially scriptable types) inline, so browsers such as Safari
+			// that refuse to render or play resources served as an attachment can
+			// preview them. X-Content-Type-Options:nosniff prevents the response
+			// from being interpreted as HTML/script in our origin.
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", path.Base(name)))
+		} else {
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", path.Base(name)))
+		}
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(responseStatus)
@@ -580,6 +590,28 @@ func downloadFile(w http.ResponseWriter, r *http.Request, connection *Connection
 		}
 	}
 	return http.StatusOK, nil
+}
+
+// inlineMediaExtensions is the allow-list of file types that may be served with an
+// inline (rather than attachment) Content-Disposition when explicitly requested with
+// "?inline=1". It deliberately excludes SVG and any markup/scriptable types: those
+// could execute in our origin if rendered inline. Combined with nosniff, serving
+// these inline is safe.
+var inlineMediaExtensions = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true, ".bmp": true,
+	".mp4": true, ".mov": true, ".webm": true, ".m4v": true, ".ogv": true,
+	".mp3": true, ".wav": true, ".m4a": true, ".aac": true, ".flac": true, ".oga": true, ".ogg": true,
+}
+
+// serveInlineMedia reports whether the request opted into inline delivery
+// ("?inline=1") for a file whose extension is a known-safe media type. Used by the
+// WebClient preview (lightbox / media player) so Safari can display images/videos
+// that it refuses to render when they are sent as an attachment.
+func serveInlineMedia(r *http.Request, name string) bool {
+	if r.URL.Query().Get("inline") != "1" {
+		return false
+	}
+	return inlineMediaExtensions[strings.ToLower(path.Ext(name))]
 }
 
 func checkPreconditions(w http.ResponseWriter, r *http.Request, modtime time.Time) bool {

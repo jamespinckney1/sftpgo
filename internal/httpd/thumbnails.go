@@ -206,10 +206,12 @@ func (t *thumbnailer) generateFromVideo(r io.Reader, ext string) ([]byte, error)
 	tmpOut := tmpIn.Name() + ".jpg"
 	defer os.Remove(tmpOut)
 
-	// Seek 1s in, grab one frame, scale to the target width keeping aspect ratio.
-	cmd := exec.Command(t.ffmpegPath, "-y", "-ss", "00:00:01", "-i", tmpIn.Name(),
-		"-frames:v", "1", "-vf", fmt.Sprintf("scale=%d:-1", thumbnailMaxEdge),
-		"-f", "image2", tmpOut)
+	// Use the "thumbnail" filter to pick a representative frame (it scores frames and
+	// avoids blank/black ones, e.g. a fade-in intro) rather than a fixed timestamp,
+	// then scale to the target width keeping aspect ratio.
+	cmd := exec.Command(t.ffmpegPath, "-y", "-i", tmpIn.Name(),
+		"-vf", fmt.Sprintf("thumbnail,scale=%d:-1", thumbnailMaxEdge),
+		"-frames:v", "1", "-f", "image2", tmpOut)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("ffmpeg failed: %w (%s)", err, string(out))
 	}

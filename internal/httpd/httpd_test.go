@@ -18222,6 +18222,52 @@ func TestWebClientThumbnail(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestWebClientInlineMedia(t *testing.T) {
+	user, _, err := httpdtest.AddUser(getTestUser(), http.StatusCreated)
+	assert.NoError(t, err)
+	err = os.MkdirAll(user.GetHomeDir(), os.ModePerm)
+	assert.NoError(t, err)
+	err = os.WriteFile(filepath.Join(user.GetHomeDir(), "pic.jpg"), []byte("not-a-real-jpeg"), os.ModePerm)
+	assert.NoError(t, err)
+	err = os.WriteFile(filepath.Join(user.GetHomeDir(), "note.txt"), []byte("hello"), os.ModePerm)
+	assert.NoError(t, err)
+
+	webToken, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	assert.NoError(t, err)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest(http.MethodGet, webClientFilesPath+"?path="+url.QueryEscape(path), nil)
+		setJWTCookieForReq(req, webToken)
+		return executeRequest(req)
+	}
+
+	// Default (no inline param) keeps the safe attachment disposition.
+	rr := get("/pic.jpg")
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Header().Get("Content-Disposition"), "attachment")
+
+	// A safe media type explicitly requested inline is served inline + nosniff.
+	req, _ := http.NewRequest(http.MethodGet, webClientFilesPath+"?path="+url.QueryEscape("/pic.jpg")+"&inline=1", nil)
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Header().Get("Content-Disposition"), "inline")
+	assert.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
+
+	// A non-media type must stay an attachment even with inline=1, so a file that
+	// could be interpreted as HTML/script can never be served inline in our origin.
+	req, _ = http.NewRequest(http.MethodGet, webClientFilesPath+"?path="+url.QueryEscape("/note.txt")+"&inline=1", nil)
+	setJWTCookieForReq(req, webToken)
+	rr = executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Contains(t, rr.Header().Get("Content-Disposition"), "attachment")
+
+	_, err = httpdtest.RemoveUser(user, http.StatusOK)
+	assert.NoError(t, err)
+	err = os.RemoveAll(user.GetHomeDir())
+	assert.NoError(t, err)
+}
+
 func TestRenameDifferentResource(t *testing.T) {
 	folderName := "foldercryptfs"
 	f := vfs.BaseVirtualFolder{

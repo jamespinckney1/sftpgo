@@ -777,7 +777,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             let items = [];
             let idx = 0;
             cards.forEach(function (c, i) {
-                items.push({ src: c.dataset.url, name: c.dataset.name || '' });
+                items.push({ src: withInline(c.dataset.url), name: c.dataset.name || '' });
                 if (c === clickedCard) {
                     idx = i;
                 }
@@ -1310,7 +1310,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 var clickedIndex = 0;
                 links.forEach(function(el, i) {
                     items.push({
-                        src: el.getAttribute('href'),
+                        src: withInline(el.getAttribute('href')),
                         name: el.dataset.ivName || ''
                     });
                     if (el === link) clickedIndex = i;
@@ -2780,9 +2780,17 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             }
         }();
 
+    // withInline requests inline delivery (Content-Disposition: inline) for a media
+    // URL, so Safari will render/play it — it refuses attachment-served media in
+    // <img>/<video>. The backend only honors this for known-safe media types.
+    function withInline(url){
+        if (!url) { return url; }
+        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'inline=1';
+    }
+
     function openMediaPlayer(name, url){
         $("#video_title").text(name);
-        $("#video_player").attr("src", url);
+        $("#video_player").attr("src", withInline(url));
         $("#video_player").get(0).load();
         $('#modal_video_player').modal('show');
         keepAlive();
