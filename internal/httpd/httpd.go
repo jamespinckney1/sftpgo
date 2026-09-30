@@ -40,6 +40,7 @@ import (
 	"github.com/drakkan/sftpgo/v2/internal/ftpd"
 	"github.com/drakkan/sftpgo/v2/internal/logger"
 	"github.com/drakkan/sftpgo/v2/internal/mfa"
+	"github.com/drakkan/sftpgo/v2/internal/photoindex"
 	"github.com/drakkan/sftpgo/v2/internal/sftpd"
 	"github.com/drakkan/sftpgo/v2/internal/util"
 	"github.com/drakkan/sftpgo/v2/internal/webdavd"
@@ -161,6 +162,7 @@ const (
 	webClientDirsPathDefault              = "/web/client/dirs"
 	webClientSearchPathDefault            = "/web/client/search"
 	webClientThumbnailPathDefault         = "/web/client/thumbnail"
+	webClientPhotoStatusPathDefault       = "/web/client/photoindex/status"
 	webClientDownloadZipPathDefault       = "/web/client/downloadzip"
 	webClientProfilePathDefault           = "/web/client/profile"
 	webClientPingPathDefault              = "/web/client/ping"
@@ -264,6 +266,7 @@ var (
 	webClientDirsPath              string
 	webClientSearchPath            string
 	webClientThumbnailPath         string
+	webClientPhotoStatusPath       string
 	webClientDownloadZipPath       string
 	webClientProfilePath           string
 	webClientPingPath              string
@@ -972,6 +975,9 @@ type Conf struct {
 	Setup SetupConfig `json:"setup" mapstructure:"setup"`
 	// Thumbnails configuration for the WebClient file browser
 	Thumbnails ThumbnailsConfig `json:"thumbnails" mapstructure:"thumbnails"`
+	// PhotoIndex configures the background photo index used by the WebClient
+	// photo search (fork feature, see FORK_FEATURES.md)
+	PhotoIndex photoindex.Config `json:"photo_index" mapstructure:"photo_index"`
 	// If enabled, the link to the sponsors section will not appear on the setup screen page
 	HideSupportLink bool `json:"hide_support_link" mapstructure:"hide_support_link"`
 	acmeDomain      string
@@ -1166,6 +1172,7 @@ func (c *Conf) Initialize(configDir string, isShared int) error {
 		return err
 	}
 	initThumbnailer(c.Thumbnails, configDir)
+	initPhotoIndex(c.PhotoIndex, configDir)
 	c.loadTemplates(templatesPath)
 	keyPairs := c.getKeyPairs(configDir)
 	if len(keyPairs) > 0 {
@@ -1315,6 +1322,7 @@ func updateWebClientURLs(baseURL string) {
 	webClientDirsPath = path.Join(baseURL, webClientDirsPathDefault)
 	webClientSearchPath = path.Join(baseURL, webClientSearchPathDefault)
 	webClientThumbnailPath = path.Join(baseURL, webClientThumbnailPathDefault)
+	webClientPhotoStatusPath = path.Join(baseURL, webClientPhotoStatusPathDefault)
 	webClientDownloadZipPath = path.Join(baseURL, webClientDownloadZipPathDefault)
 	webClientProfilePath = path.Join(baseURL, webClientProfilePathDefault)
 	webClientPingPath = path.Join(baseURL, webClientPingPathDefault)

@@ -37,7 +37,18 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             <div class="d-flex align-items-center position-relative my-1">
                 <i class="ki-solid ki-magnifier fs-1 position-absolute ms-6"></i>
                 <input name="search" data-i18n="[placeholder]general.search" type="text" data-kt-filemanager-table-filter="search" class="form-control rounded-1 w-250px ps-15" placeholder="Search Files & Folders" />
+                {{- if .PhotoStatusURL}}
+                <i class="ki-duotone ki-information-5 fs-2 text-gray-500 ms-3" data-bs-toggle="tooltip" data-bs-placement="bottom"
+                   data-i18n="[title]fs.search.photo_help" title="Photo search: taken:2023, taken:2023-06, taken:2023-06..2023-08, taken:any, taken:unknown">
+                    <span class="path1"></span>
+                    <span class="path2"></span>
+                    <span class="path3"></span>
+                </i>
+                {{- end}}
             </div>
+            {{- if .PhotoStatusURL}}
+            <div id="photo_index_status" class="text-muted fs-7 ms-3 d-none"></div>
+            {{- end}}
         </div>
         <div class="card-toolbar">
             <div class="d-flex justify-content-end" data-kt-filemanager-table-toolbar="base">
@@ -206,6 +217,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         <th data-i18n="general.size" class="min-w-10px">Size</th>
                         <th data-i18n="general.last_modified" class="min-w-125px">Last Modified</th>
                         <th data-i18n="fs.search.location" class="min-w-150px">Location</th>
+                        <th data-i18n="fs.search.taken" class="min-w-125px">Taken</th>
                         <th class="w-125px"></th>
                     </tr>
                 </thead>
@@ -653,6 +665,15 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         // the icon fallback kicks in.
         var thumbImageExts = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
         var thumbVideoExts = ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
+        // Feature: photo index. When enabled, the backend also renders HEIC,
+        // TIFF, AVIF and RAW files, and serves a large JPEG preview of them for the
+        // viewer since most browsers cannot display these formats.
+        var PHOTO_STATUS_URL = '{{.PhotoStatusURL}}';
+        var previewOnlyExts = ["heic", "heif", "hif", "tif", "tiff", "dng", "cr2", "cr3", "nef",
+            "nrw", "arw", "orf", "rw2", "raf", "pef", "srw"];
+        if (PHOTO_STATUS_URL) {
+            thumbImageExts = thumbImageExts.concat(previewOnlyExts, ["avif"]);
+        }
         // In-memory (per session) grid/table view preference; not persisted.
         var gridMode = false;
 
@@ -682,6 +703,15 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             // row['url'] points at the file via the files endpoint; swap the base
             // path for the thumbnail endpoint to get its thumbnail URL.
             return row["url"].replace('{{.FilesURL}}', THUMBNAIL_URL);
+        }
+
+        // viewerSrc returns the URL the image viewer should load for a row: the
+        // file itself, or its JPEG preview for formats browsers cannot display.
+        function viewerSrc(row) {
+            if (PHOTO_STATUS_URL && THUMBNAIL_URL && previewOnlyExts.includes(fileExtOf(row["name"]))) {
+                return thumbnailSrc(row) + "&size=preview";
+            }
+            return row["url"];
         }
 
         // mediaIcon returns either a lazy <img> thumbnail (for media files) or the
@@ -747,7 +777,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     let icon = isFolder ? "ki-folder" : (row["size"] === "" ? "ki-file-right" : "ki-file");
                     thumbInner = `<i class="ki-duotone ${icon} dt-grid-icon text-primary"><i class="path1"></i><i class="path2"></i></i>`;
                 }
-                html += `<div class="dt-grid-card" data-url="${attrEscape(row["url"])}" data-kind="${cardKind}" data-name="${attrEscape(row["name"])}">
+                html += `<div class="dt-grid-card" data-url="${attrEscape(row["url"])}" data-view="${attrEscape(viewerSrc(row))}" data-kind="${cardKind}" data-name="${attrEscape(row["name"])}">
                             <div class="dt-grid-thumb">${thumbInner}</div>
                             <div class="dt-grid-name" title="${attrEscape(row["name"])}">${escapeHTML(row["name"])}</div>
                         </div>`;
@@ -777,7 +807,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             let items = [];
             let idx = 0;
             cards.forEach(function (c, i) {
-                items.push({ src: c.dataset.url, name: c.dataset.name || '' });
+                items.push({ src: c.dataset.view || c.dataset.url, name: c.dataset.name || '' });
                 if (c === clickedCard) {
                     idx = i;
                 }
@@ -963,6 +993,29 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         }
                     },
                     {
+                        // Taken column: the date the photo was taken, populated only by
+                        // photo searches ("taken:..."). It is the local time at which the
+                        // photo was taken, so it is displayed as is, without a time zone.
+                        data: "taken",
+                        defaultContent: '',
+                        render: function (data, type, row) {
+                            if (type === 'display') {
+                                if (!data) {
+                                    return "";
+                                }
+                                let d = new Date(data);
+                                let txt = row["taken_src"] == "filename" || row["taken_src"] == "mtime" ?
+                                    $.t('general.datetime', { val: d, formatParams: { val: { year: 'numeric', month: 'numeric', day: 'numeric' } } }) :
+                                    $.t('general.datetime', { val: d, formatParams: { val: { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' } } });
+                                if (row["taken_src"] == "mtime") {
+                                    return `<span class="text-gray-500" title="${attrEscape($.t('fs.search.taken_unknown'))}">${txt} ?</span>`;
+                                }
+                                return txt;
+                            }
+                            return data || "";
+                        }
+                    },
+                    {
                         data: "edit_url",
                         defaultContent: '',
                         className: 'text-end',
@@ -980,9 +1033,19 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                         case "webp":
                                         case "bmp":
                                         case "svg":
+                                        case "avif":
+                                        case "heic":
+                                        case "heif":
+                                        case "hif":
+                                        case "tif":
+                                        case "tiff":
+                                            if (viewerSrc(row) == row['url'] && !["jpeg","jpg","png","gif","webp","bmp","svg","avif"].includes(extension)) {
+                                                // No photo index: browsers cannot display this format.
+                                                break;
+                                            }
                                             let desc = filename.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                                             previewDiv = `<div class="ms-2" data-kt-filemanger-table="view_item">
-                                                    <a href="${row['url']}" data-iv-name="${desc}" class="btn btn-sm btn-icon btn-light btn-active-light-primary iv-gallery-item">
+                                                    <a href="${viewerSrc(row)}" data-iv-name="${desc}" class="btn btn-sm btn-icon btn-light btn-active-light-primary iv-gallery-item">
                                                         <i class="ki-duotone ki-eye fs-6 m-0">
                                                             <span class="path1"></span>
                                                             <span class="path2"></span>
@@ -1114,7 +1177,14 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         searchable: false
                     },
                     {
+                        // Taken column: hidden by default, revealed during photo search.
                         targets: 6,
+                        visible: false,
+                        orderable: true,
+                        searchable: false
+                    },
+                    {
+                        targets: 7,
                         orderable: false,
                         searchable: false
                     }
@@ -1327,26 +1397,85 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         // the normal /dirs listing. The extra "Location" column (index 5) is revealed
         // while search results are shown so each hit's folder is visible.
         var PATH_COLUMN_INDEX = 5;
+        // Photo searches ("taken:...") are answered from the photo index and show
+        // an extra "Taken" column, newest first.
+        var TAKEN_COLUMN_INDEX = 6;
 
         function setPathColumnVisible(visible) {
             dt.column(PATH_COLUMN_INDEX).visible(visible, false);
         }
 
+        function isPhotoQuery(q) {
+            return PHOTO_STATUS_URL !== "" && /(^|\s)taken:/i.test(q);
+        }
+
         function applySearch(q) {
             dt.rows().deselect();
+            $('#errorMsg').addClass("d-none");
+            let order = dt.order();
+            if (order.length && order[0][0] == TAKEN_COLUMN_INDEX && !isPhotoQuery(q)) {
+                // Don't keep sorting on a hidden, empty column.
+                dt.order([2, 'asc']);
+            }
             if (q === "") {
                 if (!searchMode) {
                     return;
                 }
                 searchMode = false;
                 setPathColumnVisible(false);
+                dt.column(TAKEN_COLUMN_INDEX).visible(false, false);
                 dt.ajax.url('{{.DirsURL}}?path={{.CurrentDir}}').load();
             } else {
                 searchMode = true;
                 setPathColumnVisible(true);
+                let photo = isPhotoQuery(q);
+                dt.column(TAKEN_COLUMN_INDEX).visible(photo, false);
+                if (photo) {
+                    dt.order([TAKEN_COLUMN_INDEX, 'desc']);
+                }
                 let url = '{{.SearchURL}}?path={{.CurrentDir}}&q=' + encodeURIComponent(q);
                 dt.ajax.url(url).load();
             }
+        }
+
+        // Shows the photo index progress while files are being indexed, polling
+        // the status endpoint; hidden once the index is idle.
+        function initPhotoIndexStatus() {
+            let el = document.getElementById('photo_index_status');
+            if (!PHOTO_STATUS_URL || !el) {
+                return;
+            }
+            let poll = function () {
+                $.ajax({ url: PHOTO_STATUS_URL, type: 'GET', dataType: 'json', timeout: 15000 })
+                    .done(function (st) {
+                        if (!st.enabled) {
+                            el.classList.add('d-none');
+                            return;
+                        }
+                        let busy = st.scanning || st.pending > 0;
+                        if (!busy) {
+                            el.classList.add('d-none');
+                            setTimeout(poll, 300000);
+                            return;
+                        }
+                        let total = Number(st.total).toLocaleString();
+                        let txt = $.t('fs.search.photo_indexing', { total: total });
+                        if (st.scan_queued > 0) {
+                            txt += " " + $.t('fs.search.photo_indexing_progress', {
+                                done: Number(Math.min(st.scan_done, st.scan_queued)).toLocaleString(),
+                                queued: Number(st.scan_queued).toLocaleString()
+                            });
+                        }
+                        el.textContent = txt;
+                        el.classList.remove('d-none');
+                        setTimeout(poll, 30000);
+                    })
+                    .fail(function () {
+                        el.classList.add('d-none');
+                        setTimeout(poll, 300000);
+                    });
+            };
+            poll();
         }
 
         var handleSearchDatatable = function () {
@@ -1844,6 +1973,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 initThumbErrorHandler(document.getElementById('file_manager_list_body'));
                 initGridView();
                 //{{- end}}
+                initPhotoIndexStatus();
             }
         }
     }();

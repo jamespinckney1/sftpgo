@@ -38,6 +38,7 @@ import (
 	"github.com/drakkan/sftpgo/v2/internal/kms"
 	"github.com/drakkan/sftpgo/v2/internal/logger"
 	"github.com/drakkan/sftpgo/v2/internal/mfa"
+	"github.com/drakkan/sftpgo/v2/internal/photoindex"
 	"github.com/drakkan/sftpgo/v2/internal/plugin"
 	"github.com/drakkan/sftpgo/v2/internal/sftpd"
 	"github.com/drakkan/sftpgo/v2/internal/smtp"
@@ -438,6 +439,7 @@ func Init() {
 				MaxSourceSize: 100,
 				FFmpegPath:    "",
 			},
+			PhotoIndex:      photoindex.DefaultConfig(),
 			HideSupportLink: false,
 		},
 		HTTPConfig: httpclient.Config{
@@ -2235,6 +2237,16 @@ func setViperDefaults() {
 	viper.SetDefault("httpd.thumbnails.cache_max_size", globalConf.HTTPDConfig.Thumbnails.CacheMaxSize)
 	viper.SetDefault("httpd.thumbnails.max_source_size", globalConf.HTTPDConfig.Thumbnails.MaxSourceSize)
 	viper.SetDefault("httpd.thumbnails.ffmpeg_path", globalConf.HTTPDConfig.Thumbnails.FFmpegPath)
+	viper.SetDefault("httpd.photo_index.enabled", globalConf.HTTPDConfig.PhotoIndex.Enabled)
+	viper.SetDefault("httpd.photo_index.data_dir", globalConf.HTTPDConfig.PhotoIndex.DataDir)
+	viper.SetDefault("httpd.photo_index.preview_size", globalConf.HTTPDConfig.PhotoIndex.PreviewSize)
+	viper.SetDefault("httpd.photo_index.rescan_interval", globalConf.HTTPDConfig.PhotoIndex.RescanInterval)
+	viper.SetDefault("httpd.photo_index.startup_delay", globalConf.HTTPDConfig.PhotoIndex.StartupDelay)
+	viper.SetDefault("httpd.photo_index.workers", globalConf.HTTPDConfig.PhotoIndex.Workers)
+	viper.SetDefault("httpd.photo_index.pause_between_files", globalConf.HTTPDConfig.PhotoIndex.PauseBetweenFiles)
+	viper.SetDefault("httpd.photo_index.max_source_size", globalConf.HTTPDConfig.PhotoIndex.MaxSourceSize)
+	viper.SetDefault("httpd.photo_index.exiftool_path", globalConf.HTTPDConfig.PhotoIndex.ExiftoolPath)
+	viper.SetDefault("httpd.photo_index.vips_path", globalConf.HTTPDConfig.PhotoIndex.VipsPath)
 	viper.SetDefault("httpd.hide_support_link", globalConf.HTTPDConfig.HideSupportLink)
 	viper.SetDefault("http.timeout", globalConf.HTTPConfig.Timeout)
 	viper.SetDefault("http.retry_wait_min", globalConf.HTTPConfig.RetryWaitMin)

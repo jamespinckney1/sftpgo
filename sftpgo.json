@@ -389,6 +389,18 @@
       "max_source_size": 100,
       "ffmpeg_path": ""
     },
+    "photo_index": {
+      "enabled": false,
+      "data_dir": "photoindex",
+      "preview_size": 1024,
+      "rescan_interval": 24,
+      "startup_delay": 60,
+      "workers": 1,
+      "pause_between_files": 0,
+      "max_source_size": 200,
+      "exiftool_path": "",
+      "vips_path": ""
+    },
     "hide_support_link": false
   },
   "telemetry": {

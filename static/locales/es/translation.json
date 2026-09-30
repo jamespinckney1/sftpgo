@@ -280,7 +280,14 @@
     },
     "fs": {
         "search": {
-            "location": "Ubicación"
+            "location": "Ubicación",
+            "taken": "Tomada",
+            "taken_unknown": "Sin fecha en los metadatos ni en el nombre: se muestra la fecha de modificación",
+            "photo_help": "Búsqueda de fotos: taken:2023, taken:2023-06, taken:2023-06-14, taken:2023-06..2023-08, taken:any, taken:unknown. Se puede combinar con un nombre, p. ej. \"playa taken:2021\"",
+            "photo_indexing": "Indexando fotos: {{total}} indexadas.",
+            "photo_indexing_progress": "Pasada actual: {{done}} de {{queued}}.",
+            "photo_query_invalid": "Búsqueda de fotos no válida. Use por ejemplo taken:2023, taken:2023-06 o taken:2023-06..2023-08",
+            "photo_index_disabled": "La búsqueda de fotos no está habilitada en este servidor"
         },
         "view": {
             "toggle": "Alternar vista de cuadrícula"

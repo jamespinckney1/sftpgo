@@ -1646,6 +1646,8 @@ func (s *httpdServer) setupWebClientRoutes() {
 				Get(webClientSearchPath, s.handleClientSearch)
 			router.With(s.checkAuthRequirements, s.refreshCookie).
 				Get(webClientThumbnailPath, s.handleClientThumbnail)
+			router.With(s.checkAuthRequirements).
+				Get(webClientPhotoStatusPath, s.handleClientPhotoIndexStatus)
 			router.With(s.checkAuthRequirements, s.checkHTTPUserPerm(sdk.WebClientWriteDisabled), s.verifyCSRFHeader).
 				Post(webClientDirsPath, createUserDir)
 			router.With(s.checkAuthRequirements, s.checkHTTPUserPerm(sdk.WebClientWriteDisabled), s.verifyCSRFHeader).

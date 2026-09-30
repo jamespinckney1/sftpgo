@@ -128,10 +128,32 @@ func ExecutePreAction(conn *BaseConnection, operation, filePath, virtualPath str
 	return actionHandler.Handle(event)
 }
 
+// FsEventHook is notified of every successful filesystem operation with the
+// affected filesystem paths. It must not block.
+type FsEventHook func(operation, fsPath, fsTarget string)
+
+var fsEventHook atomic.Pointer[FsEventHook]
+
+// SetFsEventHook sets the in-process filesystem event hook, used by the photo
+// index (fork feature, see FORK_FEATURES.md) to pick up uploads, renames and
+// deletes immediately. A nil hook removes it.
+func SetFsEventHook(hook FsEventHook) {
+	if hook == nil {
+		fsEventHook.Store(nil)
+		return
+	}
+	fsEventHook.Store(&hook)
+}
+
 // ExecuteActionNotification executes the defined hook, if any, for the specified action
 func ExecuteActionNotification(conn *BaseConnection, operation, filePath, virtualPath, target, virtualTarget, sshCmd string,
 	fileSize int64, err error, elapsed int64, metadata map[string]string,
 ) error {
+	if err == nil {
+		if hook := fsEventHook.Load(); hook != nil {
+			(*hook)(operation, filePath, target)
+		}
+	}
 	hasNotifiersPlugin := plugin.Handler.HasNotifiers()
 	hasHook := slices.Contains(Config.Actions.ExecuteOn, operation)
 	hasRules := eventManager.hasFsRules()

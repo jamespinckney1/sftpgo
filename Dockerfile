@@ -40,13 +40,20 @@ ARG INSTALL_OPTIONAL_PACKAGES=false
 # thumbnails still work and videos fall back to a generic icon.
 ARG INSTALL_FFMPEG=true
 
+# Fork: install libvips (with HEIC support) and exiftool for the photo index
+# (see FORK_FEATURES.md). Set to "false" to skip them: the photo index then
+# derives dates from file names only and generates no HEIC/RAW previews.
+ARG INSTALL_PHOTO_TOOLS=true
+
 RUN apt-get update && apt-get -y upgrade && apt-get install --no-install-recommends -y ca-certificates media-types && rm -rf /var/lib/apt/lists/*
 
 RUN if [ "${INSTALL_OPTIONAL_PACKAGES}" = "true" ]; then apt-get update && apt-get install --no-install-recommends -y jq && rm -rf /var/lib/apt/lists/*; fi
 
 RUN if [ "${INSTALL_FFMPEG}" = "true" ]; then apt-get update && apt-get install --no-install-recommends -y ffmpeg && rm -rf /var/lib/apt/lists/*; fi
 
-RUN mkdir -p /etc/sftpgo /var/lib/sftpgo /usr/share/sftpgo /srv/sftpgo/data /srv/sftpgo/backups
+RUN if [ "${INSTALL_PHOTO_TOOLS}" = "true" ]; then apt-get update && apt-get install --no-install-recommends -y libvips-tools libheif-plugin-libde265 libimage-exiftool-perl && rm -rf /var/lib/apt/lists/*; fi
+
+RUN mkdir -p /etc/sftpgo /var/lib/sftpgo/photoindex /usr/share/sftpgo /srv/sftpgo/data /srv/sftpgo/backups
 
 RUN groupadd --system -g 1000 sftpgo && \
     useradd --system --gid sftpgo --no-create-home \
@@ -66,7 +73,7 @@ ENV SFTPGO_LOG_FILE_PATH=""
 RUN sed -i 's|"users_base_dir": "",|"users_base_dir": "/srv/sftpgo/data",|' /etc/sftpgo/sftpgo.json && \
     sed -i 's|"backups"|"/srv/sftpgo/backups"|' /etc/sftpgo/sftpgo.json
 
-RUN chown -R sftpgo:sftpgo /etc/sftpgo /srv/sftpgo && chown sftpgo:sftpgo /var/lib/sftpgo && chmod 700 /srv/sftpgo/backups
+RUN chown -R sftpgo:sftpgo /etc/sftpgo /srv/sftpgo && chown sftpgo:sftpgo /var/lib/sftpgo /var/lib/sftpgo/photoindex && chmod 700 /srv/sftpgo/backups
 
 WORKDIR /var/lib/sftpgo
 USER 1000:1000

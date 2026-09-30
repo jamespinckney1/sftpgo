@@ -1,11 +1,11 @@
 # WebClient enhancements (fork)
 
-This fork adds three **additive, backward-compatible** features to the end-user
+This fork adds four **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
-crypto, or the virtual-filesystem sandbox is changed; every feature lives in the
-web/HTTP layer and reuses the existing per-user permission checks. Existing
-endpoints keep their behavior — only new routes and new optional query params /
-config keys were added.
+crypto, or the virtual-filesystem sandbox is changed; the features live in the
+web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
+per-user permission checks. Existing endpoints keep their behavior — only new
+routes and new optional query params / config keys were added.
 
 ## 1. Drag-and-drop move
 
@@ -74,6 +74,126 @@ All keys are optional; thumbnails are enabled by default.
 
 Every key can also be set via environment variable, e.g.
 `SFTPGO_HTTPD__THUMBNAILS__ENABLED=false`.
+
+## 4. Photo index: search by date taken (phase 1)
+
+An opt-in background indexer catalogs the photos and videos on **local**
+filesystems so the WebClient can search them by the date they were *taken*, and
+show HEIC/TIFF/RAW photos, which browsers can't display. It is the groundwork for
+the later phases (searching by what is pictured, and by person).
+
+### Searching
+
+Type photo filters in the normal search box; they can be combined with a name
+(substring or `*`/`?` wildcard) and apply to the current folder and below:
+
+| Query | Finds |
+| --- | --- |
+| `taken:2023` | photos taken in 2023 |
+| `taken:2023-06` / `taken:2023-06-14` | a month / a day |
+| `taken:2023-06..2023-08` | an inclusive range; `taken:..2010` and `taken:2020..` work too |
+| `taken:any` | every indexed photo/video, newest first |
+| `taken:unknown` | files with no date in their metadata or name |
+| `beach taken:2021` | files named `*beach*` taken in 2021 |
+
+Results show a **Taken** column (newest first) and work in grid view. The date is
+the local time the camera recorded, so `taken:2023-06` means June 2023 wherever
+the photo was taken. Where it comes from, most reliable first:
+
+1. EXIF `DateTimeOriginal` (photos, including HEIC), Apple QuickTime
+   `CreationDate` (iPhone videos), XMP, EXIF/QuickTime `CreateDate`, PNG
+   `CreationTime`;
+2. a date in the file name (`IMG_20230614_102233.jpg`, `PXL_…`,
+   `2023-06-14 10.22.33.jpg`, `IMG-20230614-WA0001.jpg`, …);
+3. otherwise the file modification time, shown greyed out with a `?`.
+
+A small "Indexing photos…" line next to the search box shows progress while a
+pass is running.
+
+### How it works
+
+- The index is keyed by the **real filesystem path**, not by user: a photo in a
+  folder shared by several users (a virtual folder) is processed once. Every
+  user's home directory and local virtual folders are indexed; cloud (S3/GCS/
+  Azure/SFTP) and encrypted filesystems are skipped.
+- **Access control happens at query time**: each hit is mapped back to the
+  searching user's virtual path and checked with the same permission and
+  file-pattern rules as a directory listing, so users only ever see their own and
+  shared photos.
+- Uploads, renames, moves, copies and deletes done through SFTPGo (any protocol)
+  update the index immediately; renamed folders keep their data instead of being
+  re-processed. A periodic rescan (default every 24h) picks up changes made
+  outside SFTPGo. A scan never deletes index entries for a folder it cannot read
+  (e.g. an unmounted disk).
+- Each photo is decoded **once** into a ~1024px JPEG preview stored with the
+  index; thumbnails and the viewer use it, and the later ML phases will too.
+- Background work runs at low CPU and disk (idle I/O class) priority, one file at
+  a time by default, and resumes where it stopped after a restart.
+- New endpoints: `GET /web/client/photoindex/status` (progress) and
+  `GET /web/client/thumbnail?size=preview&path=…` (large preview for the viewer).
+  Photo filters go through the existing `/web/client/search` endpoint.
+
+### Tools
+
+- **exiftool** reads dates and metadata from every format (HEIC, JPEG, PNG,
+  RAW, MP4/MOV). A single long-running process is reused for all files.
+- **libvips** (`vipsthumbnail`) generates the previews; HEIC needs libheif with
+  the libde265 plugin. RAW previews use the JPEG embedded by the camera.
+
+Both are installed in the Docker image (build arg `INSTALL_PHOTO_TOOLS`, default
+`true`). Without exiftool, dates come from file names/modification times only;
+without libvips, no previews are generated. On Debian/Raspberry Pi OS:
+
+```sh
+apt-get install -y libvips-tools libheif-plugin-libde265 libimage-exiftool-perl
+```
+
+### Configuration (`sftpgo.json` → `httpd.photo_index`)
+
+The index is **disabled by default**.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Enable the photo index. |
+| `data_dir` | `"photoindex"` | Index database and previews (absolute or relative to the config dir). Put it on an SSD. Previews take about 100–200 KB per photo (roughly 5–10 GB per 50,000 photos). |
+| `preview_size` | `1024` | Longest edge, in pixels, of the generated previews. `0` disables previews. |
+| `rescan_interval` | `24` | Hours between full rescans. `0` = only at startup. |
+| `startup_delay` | `60` | Seconds to wait after startup before the first scan. |
+| `workers` | `1` | Files processed in parallel. Keep `1` on a Raspberry Pi. |
+| `pause_between_files` | `0` | Extra pause, in ms, after each file to reduce load further. |
+| `max_source_size` | `200` | Max file size in MB for which a preview is generated (dates are still read). |
+| `exiftool_path` | `""` | Path to exiftool. Empty → look it up in `PATH`. |
+| `vips_path` | `""` | Path to `vipsthumbnail`. Empty → look it up in `PATH`. |
+
+Every key can be set via environment variable, e.g.
+`SFTPGO_HTTPD__PHOTO_INDEX__ENABLED=true`.
+
+### Example: Raspberry Pi with photos on a HDD and the index on an SSD
+
+```yaml
+services:
+  sftpgo:
+    image: your-sftpgo-fork-image
+    environment:
+      SFTPGO_HTTPD__PHOTO_INDEX__ENABLED: "true"
+      SFTPGO_HTTPD__PHOTO_INDEX__DATA_DIR: /var/lib/sftpgo/photoindex
+    volumes:
+      - /mnt/hdd/sftpgo-data:/srv/sftpgo/data          # photos (read by the indexer)
+      - /mnt/ssd/sftpgo-photoindex:/var/lib/sftpgo/photoindex  # index + previews
+      # ... your existing volumes
+```
+
+The SSD directory must be writable by the container user (uid 1000):
+`sudo chown 1000:1000 /mnt/ssd/sftpgo-photoindex`.
+
+### Measuring it on your hardware
+
+`photoindex-bench` runs the pipeline on a sample of your files, without writing
+to the index, and estimates how long the first full pass will take:
+
+```sh
+docker exec -it sftpgo sftpgo photoindex-bench --dir /srv/sftpgo/data --samples 100
+```
 
 ## License & attribution
 
