@@ -225,3 +225,115 @@ func TestWebClientPhotoSearch(t *testing.T) {
 	rr = executeRequest(req)
 	checkResponseCode(t, http.StatusNotFound, rr)
 }
+
+func TestWebClientCleanupSearch(t *testing.T) {
+	u := getTestUser()
+	u.Permissions["/private"] = []string{dataprovider.PermUpload}
+	user, _, err := httpdtest.AddUser(u, http.StatusCreated)
+	require.NoError(t, err)
+	defer func() {
+		photoindex.Initialize(photoindex.Config{}, "", nil) //nolint:errcheck
+		_, err = httpdtest.RemoveUser(user, http.StatusOK)
+		assert.NoError(t, err)
+		assert.NoError(t, os.RemoveAll(user.GetHomeDir()))
+	}()
+
+	home := user.GetHomeDir()
+	data := testJPEG(t)
+	write := func(rel string, content []byte) {
+		p := filepath.Join(home, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), os.ModePerm))
+		require.NoError(t, os.WriteFile(p, content, os.ModePerm))
+	}
+	write("2019/IMG_20190501_101010.jpg", data)
+	write("backup/IMG_20190501_101010.jpg", data)  // exact copy
+	write("private/IMG_20190501_101010.jpg", data) // copy the user cannot list
+	write("big/video.bin", bytes.Repeat([]byte("x"), 3*1024*1024))
+	write("big/archive.zip", bytes.Repeat([]byte("y"), 2*1024*1024))
+	write("notes.txt", []byte("hello"))
+
+	webToken, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	require.NoError(t, err)
+	search := func(startPath, q string) []map[string]any {
+		reqURL := webClientSearchPath + "?path=" + url.QueryEscape(startPath) + "&q=" + url.QueryEscape(q)
+		req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+		setJWTCookieForReq(req, webToken)
+		rr := executeRequest(req)
+		checkResponseCode(t, http.StatusOK, rr)
+		var results []map[string]any
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &results))
+		return results
+	}
+	names := func(results []map[string]any) []string {
+		out := make([]string, 0, len(results))
+		for _, r := range results {
+			out = append(out, r["name"].(string))
+		}
+		return out
+	}
+
+	// Size searches work on any file, without the photo index, largest first.
+	res := search("/", "sort:size")
+	require.GreaterOrEqual(t, len(res), 5)
+	assert.Equal(t, []string{"video.bin", "archive.zip"}, names(res[:2]))
+	res = search("/", "larger:1MB")
+	assert.Equal(t, []string{"video.bin", "archive.zip"}, names(res))
+	res = search("/", "larger:2.5MB")
+	assert.Equal(t, []string{"video.bin"}, names(res))
+	res = search("/", "*.zip larger:1MB")
+	assert.Equal(t, []string{"archive.zip"}, names(res))
+	res = search("/", "smaller:1KB")
+	assert.Equal(t, []string{"notes.txt"}, names(res))
+	// The row meta holds the path relative to the search start, so the
+	// WebClient actions target the right file; directories are not listed.
+	res = search("/", "larger:2.5MB")
+	assert.Equal(t, "2_big/video.bin", res[0]["meta"])
+	assert.Equal(t, "/big", res[0]["path"])
+	res = search("/big", "larger:2.5MB")
+	assert.Equal(t, "2_video.bin", res[0]["meta"])
+	// Name searches also use relative metas.
+	res = search("/", "notes")
+	assert.Equal(t, "2_notes.txt", res[0]["meta"])
+	res = search("/", "IMG_2019")
+	for _, r := range res {
+		assert.Contains(t, []string{"1_", "2_"}, r["meta"].(string)[:2])
+		assert.Contains(t, r["meta"], "/", "hits in subfolders have a relative path")
+	}
+
+	// Duplicates need the photo index.
+	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"},
+		[]string{home}, 3)
+	require.Eventually(t, func() bool {
+		return photoindex.Get().Status().DupPending == 0
+	}, 20*time.Second, 100*time.Millisecond)
+
+	res = search("/", "is:duplicate")
+	require.Len(t, res, 2, "the copy in the unlistable dir is not shown")
+	assert.Equal(t, float64(1), res[0]["group"])
+	assert.Equal(t, float64(2), res[0]["group_size"])
+	assert.Equal(t, true, res[0]["dup_exact"])
+	assert.Equal(t, true, res[0]["keep"])
+	assert.Equal(t, false, res[1]["keep"])
+	assert.Equal(t, float64(len(data)), res[1]["reclaimable"])
+	assert.Equal(t, "2_2019/IMG_20190501_101010.jpg", res[0]["meta"], "shortest path kept")
+	assert.Equal(t, "2_backup/IMG_20190501_101010.jpg", res[1]["meta"])
+
+	res = search("/", "is:similar")
+	assert.Len(t, res, 2)
+	res = search("/2019", "is:duplicate")
+	assert.Empty(t, res, "only one copy inside the scope")
+	res = search("/", "is:duplicate nomatch")
+	assert.Empty(t, res)
+
+	// Deleting the extra copy, as the WebClient does (current dir + meta name).
+	csrfToken, err := getCSRFTokenFromInternalPageMock(webClientProfilePath, webToken)
+	require.NoError(t, err)
+	req, _ := http.NewRequest(http.MethodDelete, webClientFilesPath+"?path="+url.QueryEscape("/backup/IMG_20190501_101010.jpg"), nil)
+	req.RemoteAddr = defaultRemoteAddr
+	req.Header.Set("X-CSRF-TOKEN", csrfToken)
+	setJWTCookieForReq(req, webToken)
+	rr := executeRequest(req)
+	checkResponseCode(t, http.StatusOK, rr)
+	assert.Empty(t, search("/", "is:duplicate"), "the group disappears right away")
+	assert.FileExists(t, filepath.Join(home, "2019", "IMG_20190501_101010.jpg"))
+}

@@ -15,6 +15,7 @@
 package photoindex
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -22,10 +23,10 @@ import (
 	"time"
 )
 
-// Query is a parsed WebClient search query. Photo filters are written as
+// Query is a parsed WebClient search query. Filters are written as
 // "key:value" tokens; the remaining text is matched against file names.
 //
-// Supported filters:
+// Photo filters, answered from the photo index:
 //
 //	taken:2023                  the whole year
 //	taken:2023-06               a month
@@ -33,13 +34,50 @@ import (
 //	taken:2023-06..2023-08      an inclusive range, either side may be omitted
 //	taken:any                   every indexed photo/video, newest first
 //	taken:unknown               files with no date in their metadata or name
+//	is:duplicate                byte-identical copies, grouped
+//	is:similar                  visually similar photos (resized, re-encoded
+//	                            or exported copies), grouped
+//
+// Size filters, for any file (with the photo filters, only photos/videos):
+//
+//	larger:100MB                files of at least 100 MB (B, KB, MB, GB, TB)
+//	smaller:1MB                 files of at most 1 MB
+//	sort:size                   largest first
 type Query struct {
 	// Text is the rest of the query, matched against file names.
 	Text string
 	// Photo is true if the query contains photo filters and must be answered
 	// from the index.
-	Photo  bool
-	filter dateFilter
+	Photo bool
+	// Duplicates is the duplicate detection mode, DupNone for a normal search.
+	Duplicates DupMode
+	// MinSize and MaxSize are the size bounds in bytes, 0 means unbounded.
+	MinSize int64
+	MaxSize int64
+	// SortBySize is true if the results should be listed largest first.
+	SortBySize bool
+	filter     dateFilter
+}
+
+// DupMode is a duplicate detection mode.
+type DupMode int
+
+// Duplicate detection modes.
+const (
+	DupNone DupMode = iota
+	DupExact
+	DupSimilar
+)
+
+// HasSizeFilter reports whether the query restricts or sorts by size.
+func (q *Query) HasSizeFilter() bool {
+	return q.MinSize > 0 || q.MaxSize > 0 || q.SortBySize
+}
+
+// SizeMatches reports whether a file of the given size satisfies the size
+// filters.
+func (q *Query) SizeMatches(size int64) bool {
+	return (q.MinSize <= 0 || size >= q.MinSize) && (q.MaxSize <= 0 || size <= q.MaxSize)
 }
 
 var takenPartRe = regexp.MustCompile(`^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$`)
@@ -51,17 +89,91 @@ func ParseQuery(q string) (Query, error) {
 	var text []string
 	for _, tok := range strings.Fields(q) {
 		key, value, found := strings.Cut(tok, ":")
-		if !found || !strings.EqualFold(key, "taken") {
+		if !found {
 			text = append(text, tok)
 			continue
 		}
-		res.Photo = true
-		if err := res.addTakenFilter(tok, strings.ToLower(value)); err != nil {
+		var err error
+		switch strings.ToLower(key) {
+		case "taken":
+			res.Photo = true
+			err = res.addTakenFilter(tok, strings.ToLower(value))
+		case "is":
+			err = res.addIsFilter(tok, strings.ToLower(value))
+		case "larger", "smaller":
+			err = res.addSizeFilter(tok, strings.ToLower(key), value)
+		case "sort":
+			if !strings.EqualFold(value, "size") {
+				err = fmt.Errorf("invalid sort %q, use sort:size", tok)
+			}
+			res.SortBySize = true
+		default:
+			text = append(text, tok)
+		}
+		if err != nil {
 			return res, err
 		}
 	}
 	res.Text = strings.Join(text, " ")
+	res.filter.minSize = res.MinSize
+	res.filter.maxSize = res.MaxSize
+	res.filter.sortBySize = res.SortBySize
 	return res, nil
+}
+
+func (q *Query) addIsFilter(tok, value string) error {
+	switch value {
+	case "duplicate", "duplicates", "dup":
+		q.Duplicates = DupExact
+	case "similar":
+		q.Duplicates = DupSimilar
+	default:
+		return fmt.Errorf("invalid filter %q, use is:duplicate or is:similar", tok)
+	}
+	q.Photo = true
+	return nil
+}
+
+var sizeRe = regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*([kmgt]?i?b?)$`)
+
+func (q *Query) addSizeFilter(tok, key, value string) error {
+	size, err := ParseSize(value)
+	if err != nil {
+		return fmt.Errorf("invalid size filter %q: %w", tok, err)
+	}
+	if key == "larger" {
+		q.MinSize = max(q.MinSize, size)
+	} else if q.MaxSize == 0 || size < q.MaxSize {
+		q.MaxSize = size
+	}
+	return nil
+}
+
+// ParseSize parses a size such as "500", "100KB", "1.5GB" or "2GiB". Units are
+// binary (1 KB = 1024 bytes), matching how the WebClient displays sizes.
+func ParseSize(s string) (int64, error) {
+	m := sizeRe.FindStringSubmatch(strings.ToLower(strings.TrimSpace(s)))
+	if m == nil {
+		return 0, errors.New("use a number with an optional unit: B, KB, MB, GB or TB")
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, err
+	}
+	mult := float64(1)
+	if m[2] != "" {
+		switch m[2][0] {
+		case 'k':
+			mult = 1 << 10
+		case 'm':
+			mult = 1 << 20
+		case 'g':
+			mult = 1 << 30
+		case 't':
+			mult = 1 << 40
+		}
+	}
+	return int64(n * mult), nil
 }
 
 // addTakenFilter narrows the query with the value of a "taken:" token.

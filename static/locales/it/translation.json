@@ -283,11 +283,21 @@
             "location": "Posizione",
             "taken": "Scattata",
             "taken_unknown": "Nessuna data nei metadati o nel nome del file: viene mostrata la data di modifica",
-            "photo_help": "Ricerca foto: taken:2023, taken:2023-06, taken:2023-06-14, taken:2023-06..2023-08, taken:any, taken:unknown. Combinabile con un nome, es. \"mare taken:2021\"",
+            "photo_help": "Ricerca: un nome (caratteri jolly * e ?), foto per data taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; duplicati is:duplicate (identici) o is:similar (simili); dimensione larger:100MB, smaller:1MB, sort:size. Combinabili, es. \"taken:2019 larger:10MB\"",
             "photo_indexing": "Indicizzazione foto: {{total}} indicizzate.",
             "photo_indexing_progress": "Passaggio corrente: {{done}} di {{queued}}.",
             "photo_query_invalid": "Ricerca foto non valida. Usa ad esempio taken:2023, taken:2023-06 o taken:2023-06..2023-08",
-            "photo_index_disabled": "La ricerca foto non è abilitata su questo server"
+            "photo_index_disabled": "La ricerca foto non è abilitata su questo server",
+            "size_help": "Ricerca: un nome (caratteri jolly * e ?); dimensione larger:100MB, smaller:1MB, sort:size (i più grandi prima). Combinabili, es. \"*.mov larger:1GB\"",
+            "duplicates": "Duplicati",
+            "dup_select": "Seleziona le copie in più",
+            "dup_keep": "da tenere",
+            "dup_exact": "identici",
+            "dup_similar": "simili",
+            "dup_copies": "{{count}} copie",
+            "dup_summary": "Gruppi di copie identiche: {{groups}}. Eliminando le copie in più si liberano {{size}}.",
+            "similar_summary": "Gruppi di foto simili: {{groups}}. Eliminando le copie in più si libererebbero {{size}}. Controlla prima di eliminare: foto simili possono essere scatti diversi.",
+            "size_summary": "File: {{count}}, dimensione totale: {{size}}"
         },
         "view": {
             "toggle": "Attiva/disattiva vista griglia"

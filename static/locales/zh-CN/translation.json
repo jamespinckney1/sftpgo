@@ -283,11 +283,21 @@
             "location": "位置",
             "taken": "拍摄时间",
             "taken_unknown": "照片元数据和文件名中没有日期：显示的是文件修改日期",
-            "photo_help": "照片搜索：taken:2023、taken:2023-06、taken:2023-06-14、taken:2023-06..2023-08、taken:any、taken:unknown。可与名称组合，例如 \"beach taken:2021\"",
+            "photo_help": "搜索：名称（支持 * 和 ? 通配符），按拍摄日期 taken:2023、taken:2023-06..2023-08、taken:any、taken:unknown；重复 is:duplicate（完全相同）或 is:similar（相似）；大小 larger:100MB、smaller:1MB、sort:size。可组合使用，例如 \"taken:2019 larger:10MB\"",
             "photo_indexing": "正在索引照片：已索引 {{total}} 张。",
             "photo_indexing_progress": "本轮进度：{{done}} / {{queued}}。",
             "photo_query_invalid": "无效的照片搜索。例如使用 taken:2023、taken:2023-06 或 taken:2023-06..2023-08",
-            "photo_index_disabled": "此服务器未启用照片搜索"
+            "photo_index_disabled": "此服务器未启用照片搜索",
+            "size_help": "搜索：名称（支持 * 和 ? 通配符）；大小 larger:100MB、smaller:1MB、sort:size（最大的在前）。可组合使用，例如 \"*.mov larger:1GB\"",
+            "duplicates": "重复项",
+            "dup_select": "选择多余的副本",
+            "dup_keep": "保留",
+            "dup_exact": "完全相同",
+            "dup_similar": "相似",
+            "dup_copies": "{{count}} 个副本",
+            "dup_summary": "完全相同的副本组：{{groups}}。删除多余副本可释放 {{size}}。",
+            "similar_summary": "相似照片组：{{groups}}。删除多余副本可释放 {{size}}。删除前请检查：相似的照片可能是不同的拍摄。",
+            "size_summary": "文件：{{count}}，总大小：{{size}}"
         },
         "view": {
             "toggle": "切换网格视图"

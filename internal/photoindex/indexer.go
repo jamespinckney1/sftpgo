@@ -68,6 +68,7 @@ type Manager struct {
 	backfillQueue chan string
 	events        chan fsEvent
 	rescanCh      chan struct{}
+	dupCh         chan struct{}
 	stop          chan struct{}
 	wg            sync.WaitGroup
 
@@ -77,6 +78,7 @@ type Manager struct {
 	scanning        atomic.Bool
 	lastScanEnd     atomic.Int64
 	processed       atomic.Int64
+	inFlight        atomic.Int64
 	scanQueued      atomic.Int64
 	scanDone        atomic.Int64
 	previewDisabled bool
@@ -152,6 +154,7 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 		backfillQueue: make(chan string, backfillQueueSize),
 		events:        make(chan fsEvent, eventQueueSize),
 		rescanCh:      make(chan struct{}, 1),
+		dupCh:         make(chan struct{}, 1),
 		stop:          make(chan struct{}),
 	}
 	if m.exiftoolPath != "" {
@@ -175,6 +178,9 @@ func (m *Manager) start() {
 	}
 	m.wg.Go(m.eventLoop)
 	m.wg.Go(m.scanLoop)
+	m.wg.Go(m.dupLoop)
+	// Pick up work left over from a previous run or a schema upgrade.
+	m.kickDuplicates()
 }
 
 // Stop stops the background goroutines and closes the database.
@@ -344,6 +350,7 @@ func (m *Manager) scan() {
 		}
 	}
 	m.removeOrphans(roots)
+	m.kickDuplicates()
 	logger.Info(logSender, "", "photo index scan completed in %s, files queued: %d",
 		time.Since(start).Round(time.Second), m.scanQueued.Load())
 }
@@ -495,10 +502,13 @@ func (m *Manager) worker() {
 				return
 			}
 		}
+		m.inFlight.Add(1)
 		if err := m.processFile(p); err != nil {
 			logger.Debug(logSender, "", "unable to index %q: %v", p, err)
 		}
+		m.inFlight.Add(-1)
 		m.processed.Add(1)
+		m.kickDuplicates()
 		if m.cfg.PauseBetweenFiles > 0 {
 			if !m.sleep(time.Duration(m.cfg.PauseBetweenFiles) * time.Millisecond) {
 				return
@@ -537,7 +547,25 @@ func (m *Manager) processFile(fsPath string) error {
 	if err != nil {
 		return err
 	}
-	return m.updatePreview(id, rec)
+	if err := m.updatePreview(id, rec); err != nil {
+		return err
+	}
+	return m.updatePHash(fsPath)
+}
+
+// updatePHash computes the perceptual hash of a freshly indexed image, right
+// after its preview was generated (cheap: the preview is small and on fast
+// storage).
+func (m *Manager) updatePHash(fsPath string) error {
+	rec, found, err := m.store.get(fsPath)
+	if err != nil || !found || rec.Kind == KindVideo {
+		return err
+	}
+	ph, err := m.computePHash(&rec)
+	if err != nil {
+		logger.Debug(logSender, "", "perceptual hash of %q not computed: %v", fsPath, err)
+	}
+	return m.store.setPHash(&rec, ph)
 }
 
 // updatePreview generates the preview for an indexed file, if applicable, and
@@ -572,6 +600,10 @@ func (m *Manager) readMetadata(fsPath, kind string, info os.FileInfo) *Media {
 		}
 	}
 	md := resolveMetadata(fields, fsPath, info.ModTime())
+	if md.width == 0 && goDecodable[strings.ToLower(filepath.Ext(fsPath))] {
+		// No exiftool: read the dimensions from the image header.
+		md.width, md.height = imageDimensions(fsPath)
+	}
 	return &Media{
 		Path:      fsPath,
 		Size:      info.Size(),
@@ -786,6 +818,7 @@ type Status struct {
 	ScanQueued  int64 `json:"scan_queued"`
 	ScanDone    int64 `json:"scan_done"`
 	Pending     int   `json:"pending"`
+	DupPending  int64 `json:"dup_pending"`
 	LastScanEnd int64 `json:"last_scan_end,omitempty"`
 }
 
@@ -795,12 +828,17 @@ func (m *Manager) Status() Status {
 	if err != nil {
 		logger.Debug(logSender, "", "unable to count the indexed files: %v", err)
 	}
+	dupPending, err := m.store.pendingDuplicateWork()
+	if err != nil {
+		logger.Debug(logSender, "", "unable to count the pending duplicate work: %v", err)
+	}
 	return Status{
 		Counts:      c,
 		Scanning:    m.scanning.Load() || m.scanDone.Load() < m.scanQueued.Load(),
 		ScanQueued:  m.scanQueued.Load(),
 		ScanDone:    m.scanDone.Load(),
 		Pending:     len(m.prioQueue) + len(m.backfillQueue),
+		DupPending:  dupPending,
 		LastScanEnd: m.lastScanEnd.Load(),
 	}
 }

@@ -283,11 +283,21 @@
             "location": "Location",
             "taken": "Taken",
             "taken_unknown": "No date in the photo metadata or file name: the file modification date is shown",
-            "photo_help": "Photo search: taken:2023, taken:2023-06, taken:2023-06-14, taken:2023-06..2023-08, taken:any, taken:unknown. Combine with a name, e.g. \"beach taken:2021\"",
+            "photo_help": "Search: a name (* and ? wildcards), photos by date taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; duplicates is:duplicate (identical) or is:similar (look alike); size larger:100MB, smaller:1MB, sort:size. Combine them, e.g. \"taken:2019 larger:10MB\"",
             "photo_indexing": "Indexing photos: {{total}} indexed.",
             "photo_indexing_progress": "Current pass: {{done}} of {{queued}}.",
             "photo_query_invalid": "Invalid photo search. Use for example taken:2023, taken:2023-06 or taken:2023-06..2023-08",
-            "photo_index_disabled": "Photo search is not enabled on this server"
+            "photo_index_disabled": "Photo search is not enabled on this server",
+            "size_help": "Search: a name (* and ? wildcards); size larger:100MB, smaller:1MB, sort:size (largest first). Combine them, e.g. \"*.mov larger:1GB\"",
+            "duplicates": "Duplicates",
+            "dup_select": "Select extra copies",
+            "dup_keep": "keep",
+            "dup_exact": "identical",
+            "dup_similar": "similar",
+            "dup_copies": "{{count}} copies",
+            "dup_summary": "Groups of identical copies: {{groups}}. Deleting the extra copies frees {{size}}.",
+            "similar_summary": "Groups of similar photos: {{groups}}. Deleting the extra copies would free {{size}}. Review before deleting: similar photos may be different shots.",
+            "size_summary": "Files: {{count}}, total size: {{size}}"
         },
         "view": {
             "toggle": "Toggle grid view"

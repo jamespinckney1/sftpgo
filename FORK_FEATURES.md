@@ -1,6 +1,6 @@
 # WebClient enhancements (fork)
 
-This fork adds four **additive, backward-compatible** features to the end-user
+This fork adds five **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
 crypto, or the virtual-filesystem sandbox is changed; the features live in the
 web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
@@ -194,6 +194,58 @@ to the index, and estimates how long the first full pass will take:
 ```sh
 docker exec -it sftpgo sftpgo photoindex-bench --dir /srv/sftpgo/data --samples 100
 ```
+
+## 5. Cleanup: largest files and duplicate photos
+
+Two more kinds of search help free space. Like every search they apply to the
+current folder and everything below it, and list only what the user can see.
+
+### Largest files (any file type, photo index not needed)
+
+| Query | Finds |
+| --- | --- |
+| `sort:size` | everything, largest first |
+| `larger:500MB` / `smaller:1MB` | files of at least / at most that size (B, KB, MB, GB, TB; 1 KB = 1024 bytes) |
+| `*.mov larger:1GB` | combined with a name |
+| `taken:2019 larger:20MB` | combined with photo filters (photos/videos only, from the index) |
+
+Size searches return the 2000 largest matching files and a summary line with
+their count and total size.
+
+### Duplicate photos (needs the photo index)
+
+| Query | Finds |
+| --- | --- |
+| `is:duplicate` | byte-identical copies |
+| `is:similar` | photos that look the same: identical copies plus resized, re-compressed or re-exported ones (a WhatsApp copy, a JPEG exported from a HEIC, …) |
+
+Results are grouped, the groups wasting the most space first. In each group the
+copy suggested to **keep** comes first: the highest resolution, then the
+largest file, then the oldest, then the shortest path. **Select extra copies**
+selects every other copy; review them (the grid view is handy for comparing)
+and use the normal Delete action. A summary line shows how much space that
+frees. Nothing is ever deleted automatically, and deletes go through the usual
+permission checks.
+
+How it works:
+
+- **Exact duplicates**: only files that have the same size as another file
+  are hashed (SHA-256), so on a real library almost nothing is read twice.
+  Hashing runs in the background when the indexer is otherwise idle.
+- **Similar photos**: each photo gets a 64-bit perceptual hash (dHash) computed
+  from its preview, a fingerprint that survives resizing and re-compression.
+  Photos whose fingerprints differ by at most 6 bits and that have the same
+  aspect ratio are grouped. Featureless images (plain sky, dark frames) are
+  skipped, since they would all look alike.
+- **Intentional pairs are protected**: files with the same name and a different
+  extension in the same folder (camera RAW+JPEG, iPhone HEIC+JPG) are never
+  grouped together, and are always kept with the copy they belong to.
+- Similar is not identical: bursts of nearly identical shots can be grouped,
+  so review `is:similar` results before deleting.
+
+Actions on search results (delete, rename, move/copy, download, share) now act
+on the file where it actually is. Previously they assumed every result was in
+the current folder.
 
 ## License & attribution
 

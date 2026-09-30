@@ -283,11 +283,21 @@
             "location": "Speicherort",
             "taken": "Aufgenommen",
             "taken_unknown": "Kein Datum in den Metadaten oder im Dateinamen: das Änderungsdatum wird angezeigt",
-            "photo_help": "Fotosuche: taken:2023, taken:2023-06, taken:2023-06-14, taken:2023-06..2023-08, taken:any, taken:unknown. Mit einem Namen kombinierbar, z. B. \"strand taken:2021\"",
+            "photo_help": "Suche: ein Name (Platzhalter * und ?), Fotos nach Aufnahmedatum taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; Duplikate is:duplicate (identisch) oder is:similar (ähnlich); Größe larger:100MB, smaller:1MB, sort:size. Kombinierbar, z. B. \"taken:2019 larger:10MB\"",
             "photo_indexing": "Fotos werden indiziert: {{total}} indiziert.",
             "photo_indexing_progress": "Aktueller Durchlauf: {{done}} von {{queued}}.",
             "photo_query_invalid": "Ungültige Fotosuche. Verwenden Sie z. B. taken:2023, taken:2023-06 oder taken:2023-06..2023-08",
-            "photo_index_disabled": "Die Fotosuche ist auf diesem Server nicht aktiviert"
+            "photo_index_disabled": "Die Fotosuche ist auf diesem Server nicht aktiviert",
+            "size_help": "Suche: ein Name (Platzhalter * und ?); Größe larger:100MB, smaller:1MB, sort:size (größte zuerst). Kombinierbar, z. B. \"*.mov larger:1GB\"",
+            "duplicates": "Duplikate",
+            "dup_select": "Überzählige Kopien auswählen",
+            "dup_keep": "behalten",
+            "dup_exact": "identisch",
+            "dup_similar": "ähnlich",
+            "dup_copies": "{{count}} Kopien",
+            "dup_summary": "Gruppen identischer Kopien: {{groups}}. Das Löschen der überzähligen Kopien gibt {{size}} frei.",
+            "similar_summary": "Gruppen ähnlicher Fotos: {{groups}}. Das Löschen der überzähligen Kopien würde {{size}} freigeben. Vor dem Löschen prüfen: ähnliche Fotos können verschiedene Aufnahmen sein.",
+            "size_summary": "Dateien: {{count}}, Gesamtgröße: {{size}}"
         },
         "view": {
             "toggle": "Rasteransicht umschalten"

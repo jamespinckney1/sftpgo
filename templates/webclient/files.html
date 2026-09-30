@@ -37,21 +37,30 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             <div class="d-flex align-items-center position-relative my-1">
                 <i class="ki-solid ki-magnifier fs-1 position-absolute ms-6"></i>
                 <input name="search" data-i18n="[placeholder]general.search" type="text" data-kt-filemanager-table-filter="search" class="form-control rounded-1 w-250px ps-15" placeholder="Search Files & Folders" />
-                {{- if .PhotoStatusURL}}
+                {{- if .SearchURL}}
                 <i class="ki-duotone ki-information-5 fs-2 text-gray-500 ms-3" data-bs-toggle="tooltip" data-bs-placement="bottom"
-                   data-i18n="[title]fs.search.photo_help" title="Photo search: taken:2023, taken:2023-06, taken:2023-06..2023-08, taken:any, taken:unknown">
+                   {{- if .PhotoStatusURL}}
+                   data-i18n="[title]fs.search.photo_help" title="Photo search: taken:2023, taken:2023-06, taken:2023-06..2023-08, taken:any, taken:unknown"
+                   {{- else}}
+                   data-i18n="[title]fs.search.size_help" title="Size search: larger:100MB, smaller:1MB, sort:size"
+                   {{- end}}>
                     <span class="path1"></span>
                     <span class="path2"></span>
                     <span class="path3"></span>
                 </i>
                 {{- end}}
             </div>
+            <div id="search_summary" class="text-gray-700 fs-7 ms-3 d-none"></div>
             {{- if .PhotoStatusURL}}
             <div id="photo_index_status" class="text-muted fs-7 ms-3 d-none"></div>
             {{- end}}
         </div>
         <div class="card-toolbar">
             <div class="d-flex justify-content-end" data-kt-filemanager-table-toolbar="base">
+                {{- if .PhotoStatusURL}}
+                <button id="id_dup_select_button" type="button" class="btn btn-flex btn-light-danger me-3 d-none"
+                        data-i18n="fs.search.dup_select">Select extra copies</button>
+                {{- end}}
                 {{- if .ThumbnailURL}}
                 <button id="id_view_toggle_button" type="button" class="btn btn-flex btn-light me-3"
                         title="Toggle grid view" data-i18n="[title]fs.view.toggle">
@@ -218,6 +227,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         <th data-i18n="general.last_modified" class="min-w-125px">Last Modified</th>
                         <th data-i18n="fs.search.location" class="min-w-150px">Location</th>
                         <th data-i18n="fs.search.taken" class="min-w-125px">Taken</th>
+                        <th data-i18n="fs.search.duplicates" class="min-w-150px">Duplicates</th>
                         <th class="w-125px"></th>
                     </tr>
                 </thead>
@@ -248,6 +258,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
     [data-kt-filemanager-table-nav-bar="base"].dnd-drop-over {
         box-shadow: 0 0 0 2px var(--bs-primary, #009ef7);
     }
+
+    /* Feature: duplicate groups (photo index) */
+    #file_manager_list tr.dup-group-alt > td {
+        background-color: rgba(var(--bs-primary-rgb), 0.05);
+    }
+    .dt-grid-group { font-size: 0.75rem; color: var(--bs-gray-600); }
 
     /* Feature: thumbnails + grid view */
     #file_manager_list_body img.dt-thumb {
@@ -705,6 +721,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             return row["url"].replace('{{.FilesURL}}', THUMBNAIL_URL);
         }
 
+        // dupLabel describes a row's duplicate group, e.g. "#3 · exact · 4 copies".
+        function dupLabel(row) {
+            let kind = row["dup_exact"] ? $.t('fs.search.dup_exact') : $.t('fs.search.dup_similar');
+            return `#${row["group"]} · ${kind} · ${$.t('fs.search.dup_copies', { count: row["group_size"] })}`;
+        }
+
         // viewerSrc returns the URL the image viewer should load for a row: the
         // file itself, or its JPEG preview for formats browsers cannot display.
         function viewerSrc(row) {
@@ -780,6 +802,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 html += `<div class="dt-grid-card" data-url="${attrEscape(row["url"])}" data-view="${attrEscape(viewerSrc(row))}" data-kind="${cardKind}" data-name="${attrEscape(row["name"])}">
                             <div class="dt-grid-thumb">${thumbInner}</div>
                             <div class="dt-grid-name" title="${attrEscape(row["name"])}">${escapeHTML(row["name"])}</div>
+                            ${row["group"] ? `<div class="dt-grid-group">${escapeHTML(dupLabel(row))}</div>` : ""}
                         </div>`;
             }
             grid.innerHTML = html;
@@ -876,6 +899,10 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 },
                 deferRender: true,
                 processing: true,
+                rowCallback: function (row, data) {
+                    // Shade every other duplicate group so the groups stand out.
+                    row.classList.toggle('dup-group-alt', !!data["group"] && data["group"] % 2 == 0);
+                },
                 //{{- if .CanRename}}
                 createdRow: function (row, data) {
                     // Feature: drag-and-drop move. Tag every row with its metadata so the
@@ -907,6 +934,17 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     // Recursive search is server-side and per-session; never restore a
                     // stale client-side filter from saved state.
                     data.search.search = "";
+                    // Nor the search-only columns (Location, Taken, Duplicates).
+                    if (data.columns) {
+                        [5, 6, 7].forEach(function (i) {
+                            if (data.columns[i]) {
+                                data.columns[i].visible = false;
+                            }
+                        });
+                    }
+                    if (data.order && data.order.length && data.order[0][0] >= 5) {
+                        data.order = [[2, 'asc']];
+                    }
                 },
                 columns: [
                     {
@@ -1013,6 +1051,26 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                 return txt;
                             }
                             return data || "";
+                        }
+                    },
+                    {
+                        // Duplicates column: populated only by "is:duplicate" and
+                        // "is:similar" searches. Rows come grouped from the server, the
+                        // copy suggested to keep first.
+                        data: "group",
+                        defaultContent: '',
+                        orderable: false,
+                        render: function (data, type, row) {
+                            if (type === 'display') {
+                                if (!data) {
+                                    return "";
+                                }
+                                let dims = row["width"] ? ` · ${row["width"]}×${row["height"]}` : "";
+                                let badge = row["keep"] ?
+                                    `<span class="badge badge-light-success ms-2">${escapeHTML($.t('fs.search.dup_keep'))}</span>` : "";
+                                return `${escapeHTML(dupLabel(row))}${escapeHTML(dims)}${badge}`;
+                            }
+                            return data || 0;
                         }
                     },
                     {
@@ -1184,7 +1242,14 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         searchable: false
                     },
                     {
+                        // Duplicates column: hidden by default, revealed during duplicate search.
                         targets: 7,
+                        visible: false,
+                        orderable: false,
+                        searchable: false
+                    },
+                    {
+                        targets: 8,
                         orderable: false,
                         searchable: false
                     }
@@ -1405,37 +1470,115 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             dt.column(PATH_COLUMN_INDEX).visible(visible, false);
         }
 
+        var DUP_COLUMN_INDEX = 7;
+        var SIZE_COLUMN_INDEX = 3;
+        // What the current search is: "dup", "size", "photo" or "name".
+        var searchKind = "name";
+
         function isPhotoQuery(q) {
-            return PHOTO_STATUS_URL !== "" && /(^|\s)taken:/i.test(q);
+            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is):/i.test(q);
+        }
+
+        function getSearchKind(q) {
+            if (PHOTO_STATUS_URL !== "" && /(^|\s)is:(duplicates?|dup|similar)(\s|$)/i.test(q)) {
+                return "dup";
+            }
+            if (/(^|\s)(larger|smaller|sort):/i.test(q)) {
+                return "size";
+            }
+            if (isPhotoQuery(q)) {
+                return "photo";
+            }
+            return "name";
         }
 
         function applySearch(q) {
             dt.rows().deselect();
             $('#errorMsg').addClass("d-none");
+            $('#search_summary').addClass("d-none");
             let order = dt.order();
-            if (order.length && order[0][0] == TAKEN_COLUMN_INDEX && !isPhotoQuery(q)) {
-                // Don't keep sorting on a hidden, empty column.
+            if (order.length && order[0][0] >= PATH_COLUMN_INDEX) {
+                // Don't keep sorting on a search-only column.
                 dt.order([2, 'asc']);
             }
             if (q === "") {
+                searchKind = "name";
+                $('#id_dup_select_button').addClass("d-none");
                 if (!searchMode) {
                     return;
                 }
                 searchMode = false;
                 setPathColumnVisible(false);
                 dt.column(TAKEN_COLUMN_INDEX).visible(false, false);
+                dt.column(DUP_COLUMN_INDEX).visible(false, false);
                 dt.ajax.url('{{.DirsURL}}?path={{.CurrentDir}}').load();
-            } else {
-                searchMode = true;
-                setPathColumnVisible(true);
-                let photo = isPhotoQuery(q);
-                dt.column(TAKEN_COLUMN_INDEX).visible(photo, false);
-                if (photo) {
-                    dt.order([TAKEN_COLUMN_INDEX, 'desc']);
-                }
-                let url = '{{.SearchURL}}?path={{.CurrentDir}}&q=' + encodeURIComponent(q);
-                dt.ajax.url(url).load();
+                return;
             }
+            searchMode = true;
+            searchKind = getSearchKind(q);
+            setPathColumnVisible(true);
+            dt.column(TAKEN_COLUMN_INDEX).visible(searchKind === "photo" || searchKind === "dup", false);
+            dt.column(DUP_COLUMN_INDEX).visible(searchKind === "dup", false);
+            $('#id_dup_select_button').toggleClass("d-none", searchKind !== "dup");
+            if (searchKind === "dup") {
+                // Keep the server order: grouped, the copy to keep first.
+                dt.order([]);
+            } else if (searchKind === "size") {
+                dt.order([SIZE_COLUMN_INDEX, 'desc']);
+            } else if (searchKind === "photo") {
+                dt.order([TAKEN_COLUMN_INDEX, 'desc']);
+            }
+            let url = '{{.SearchURL}}?path={{.CurrentDir}}&q=' + encodeURIComponent(q);
+            dt.ajax.url(url).load();
+        }
+
+        // Summarizes size and duplicate searches: the total size of the results,
+        // or the number of duplicate groups and the space deleting the extra
+        // copies would free.
+        function updateSearchSummary(rows) {
+            let el = $('#search_summary');
+            if (!searchMode || (searchKind !== "dup" && searchKind !== "size") || !rows) {
+                el.addClass("d-none");
+                return;
+            }
+            let txt;
+            if (searchKind === "dup") {
+                let groups = {};
+                rows.forEach(function (r) {
+                    if (r["group"]) {
+                        groups[r["group"]] = r["reclaimable"] || 0;
+                    }
+                });
+                let ids = Object.keys(groups);
+                let freed = ids.reduce(function (acc, g) { return acc + groups[g]; }, 0);
+                let exact = rows.length > 0 && rows.every(function (r) { return !r["group"] || r["dup_exact"]; });
+                txt = $.t(exact ? 'fs.search.dup_summary' : 'fs.search.similar_summary',
+                    { groups: ids.length.toLocaleString(), size: fileSizeIEC(freed) });
+            } else {
+                let total = rows.reduce(function (acc, r) { return acc + (Number(r["size"]) || 0); }, 0);
+                txt = $.t('fs.search.size_summary', { count: rows.length.toLocaleString(), size: fileSizeIEC(total) });
+            }
+            el.text(txt).removeClass("d-none");
+        }
+
+        var initDupSelect = function () {
+            dt.on('xhr.dt', function (e, settings, json) {
+                updateSearchSummary(Array.isArray(json) ? json : null);
+            });
+            let btn = document.getElementById('id_dup_select_button');
+            if (!btn) {
+                return;
+            }
+            $(btn).off('click').on('click', function () {
+                // Select every copy except the one suggested to keep in each group;
+                // the regular toolbar then offers to delete them.
+                dt.rows().deselect();
+                dt.rows(function (idx, data) {
+                    return !!data["group"] && !data["keep"];
+                }).select();
+                // Redraw to sync the row checkboxes and show the selection toolbar.
+                dt.draw(false);
+            });
         }
 
         // Shows the photo index progress while files are being indexed, polling
@@ -1651,7 +1794,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                 if (index >= selectedRowsIdx.length || hasError){
                                     KTApp.hidePageLoading();
                                     if (!hasError){
-                                        location.reload();
+                                        reloadListing();
                                     }
                                     return;
                                 }
@@ -1974,12 +2117,39 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 initGridView();
                 //{{- end}}
                 initPhotoIndexStatus();
+                initDupSelect();
             }
         }
     }();
 
     function getNameFromMeta(meta) {
         return meta.split('_').slice(1).join('_');
+    }
+
+    // In search results the meta name is the path relative to the current
+    // directory (e.g. "2021/Beach/IMG_1.jpg"), so actions that build paths as
+    // current dir + name target the right file. These helpers split it.
+    function baseNameOf(p) {
+        let i = p.lastIndexOf('/');
+        return i < 0 ? p : p.slice(i + 1);
+    }
+
+    function relDirOf(p) {
+        let i = p.lastIndexOf('/');
+        return i < 0 ? "" : p.slice(0, i);
+    }
+
+    // reloadListing refreshes the list after a change: search results are
+    // reloaded in place (keeping the query), otherwise the page is reloaded.
+    function reloadListing() {
+        let box = document.querySelector('[data-kt-filemanager-table-filter="search"]');
+        if (box && box.value.trim() !== "") {
+            KTApp.hidePageLoading();
+            $('#file_manager_list').DataTable().rows().deselect();
+            $('#file_manager_list').DataTable().ajax.reload(null, false);
+            return;
+        }
+        location.reload();
     }
 
     function getTypeFromMeta(meta) {
@@ -1995,7 +2165,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         $('#errorMsg').addClass("d-none");
         $('#move_copy_name_container').removeClass("d-none");
         $('#move_copy_source').val(meta);
-        $('#move_copy_name').val(getNameFromMeta(meta));
+        $('#move_copy_name').val(baseNameOf(getNameFromMeta(meta)));
         $('#modal_move_or_copy').modal('show');
         KTDatatablesFoldersExplorer.init('{{.DirsURL}}?dirtree=1&path={{.CurrentDir}}', '{{.CurrentDir}}');
     }
@@ -2021,7 +2191,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 items.push({
                     targetDir: targetDir,
                     sourceName: sourceName,
-                    targetName: sourceName
+                    targetName: baseNameOf(sourceName)
                 });
             });
         } else {
@@ -2096,7 +2266,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             if (index >= items.length || hasError){
                 KTApp.hidePageLoading();
                 if (!hasError){
-                    location.reload();
+                    reloadListing();
                 }
                 return;
             }
@@ -2249,7 +2419,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             if (index >= items.length || hasError){
                 KTApp.hidePageLoading();
                 if (!hasError){
-                    location.reload();
+                    reloadListing();
                 }
                 return;
             }
@@ -2417,13 +2587,13 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                             delay: 500
                         }).then((result) => {
                             if (result.status == 200){
-                                location.reload();
+                                reloadListing();
                             } else {
                                 showDeleteItemError(result.status, itemName);
                             }
                         });
                     } else {
-                        location.reload();
+                        reloadListing();
                     }
                 }).catch(function(error){
                     let status = 0;
@@ -2450,8 +2620,8 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         $('#errorMsg').addClass("d-none");
         let oldName = getNameFromMeta(meta);
         $('#rename_old_name').val(meta);
-        $('#rename_new_name').val(oldName);
-        $('#rename_title').text($.t('fs.rename.title', { name: oldName}));
+        $('#rename_new_name').val(baseNameOf(oldName));
+        $('#rename_title').text($.t('fs.rename.title', { name: baseNameOf(oldName)}));
         $('#modal_rename').modal('show');
     }
 
@@ -2485,7 +2655,11 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
     function doRename() {
         let meta = $('#rename_old_name').val();
         let oldName = getNameFromMeta(meta);
-        let newName = $('#rename_new_name').val();
+        // Search results: rename inside the file's own folder.
+        let relDir = relDirOf(oldName);
+        let relPrefix = relDir ? relDir + "/" : "";
+        let newBaseName = $('#rename_new_name').val();
+        let newName = newBaseName ? relPrefix + newBaseName : newBaseName;
         if (!newName){
             ModalAlert.fire({
                 text: $.t('general.name_required'),
@@ -2508,7 +2682,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             });
             return;
         }
-        if (newName.includes("/")){
+        if (newBaseName.includes("/")){
             ModalAlert.fire({
                 text: $.t('fs.invalid_name'),
                 icon: "warning",
@@ -2540,7 +2714,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     delay: 500
                 }).then((result) => {
                     if (result.status == 200){
-                        location.reload();
+                        reloadListing();
                     } else {
                         showRenameItemError(result.status, oldName);
                     }
@@ -2556,8 +2730,8 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
 
         CheckExist.fire({
             operation: "move",
-            files: [newName],
-            path: '{{.CurrentDir}}'
+            files: [newBaseName],
+            path: relDir ? '{{.CurrentDir}}' + encodeURIComponent("/" + relDir) : '{{.CurrentDir}}'
         }).then((result)=>{
             if (result.error) {
                 KTApp.hidePageLoading();
@@ -2651,7 +2825,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 return status == 201;
             }
             }).then(function (response) {
-                location.reload();
+                reloadListing();
             }).catch(function (error) {
                 let errorMessage = "";
                 if (error && error.response) {
@@ -2710,7 +2884,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 clearInterval(keepAliveTimer);
                 KTApp.hidePageLoading();
                 if (!has_errors) {
-                    location.reload();
+                    reloadListing();
                 }
                 return;
             }

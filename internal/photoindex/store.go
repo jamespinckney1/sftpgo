@@ -24,7 +24,7 @@ import (
 
 // schemaVersion is the current version of the index schema. Later phases (CLIP
 // embeddings, faces) add tables through new migrations.
-const schemaVersion = 1
+const schemaVersion = 2
 
 var migrations = []string{
 	// version 1
@@ -47,6 +47,14 @@ var migrations = []string{
 		indexed_at INTEGER NOT NULL
 	);
 	CREATE INDEX media_taken_idx ON media(taken);`,
+	// version 2: duplicate detection. hash is the SHA-256 of the content,
+	// computed only for files sharing their size with another file; phash is
+	// a 64-bit perceptual hash (dHash) of the image, NULL if not computed.
+	`ALTER TABLE media ADD COLUMN hash TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN phash INTEGER;
+	ALTER TABLE media ADD COLUMN phash_tried INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX media_size_idx ON media(size);
+	CREATE INDEX media_hash_idx ON media(hash) WHERE hash != '';`,
 }
 
 // Media is an indexed photo or video.
@@ -67,6 +75,8 @@ type Media struct {
 	HasPreview bool
 	Error      string
 	IndexedAt  int64
+	Hash       string // SHA-256 of the content, empty if not computed
+	PHash      *int64 // perceptual hash, nil if not computed
 }
 
 // TakenTime returns the date taken as a time.Time in the UTC location holding
@@ -130,7 +140,7 @@ func prefixRange(dir string) (string, string) {
 }
 
 const mediaColumns = `id, path, size, mtime, kind, taken, taken_src, tz_offset, width, height, lat, lon,
-	camera, has_preview, error, indexed_at`
+	camera, has_preview, error, indexed_at, hash, phash`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -139,10 +149,14 @@ type scanner interface {
 func scanMedia(row scanner) (Media, error) {
 	var m Media
 	var lat, lon sql.NullFloat64
+	var phash sql.NullInt64
 	err := row.Scan(&m.ID, &m.Path, &m.Size, &m.ModTime, &m.Kind, &m.Taken, &m.TakenSrc, &m.TZOffset,
-		&m.Width, &m.Height, &lat, &lon, &m.Camera, &m.HasPreview, &m.Error, &m.IndexedAt)
+		&m.Width, &m.Height, &lat, &lon, &m.Camera, &m.HasPreview, &m.Error, &m.IndexedAt, &m.Hash, &phash)
 	if lat.Valid && lon.Valid {
 		m.Lat, m.Lon = &lat.Float64, &lon.Float64
+	}
+	if phash.Valid {
+		m.PHash = &phash.Int64
 	}
 	return m, err
 }
@@ -196,7 +210,8 @@ func (s *store) upsert(m *Media) (int64, error) {
 		ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, kind=excluded.kind,
 		taken=excluded.taken, taken_src=excluded.taken_src, tz_offset=excluded.tz_offset, width=excluded.width,
 		height=excluded.height, lat=excluded.lat, lon=excluded.lon, camera=excluded.camera,
-		has_preview=excluded.has_preview, error=excluded.error, indexed_at=excluded.indexed_at
+		has_preview=excluded.has_preview, error=excluded.error, indexed_at=excluded.indexed_at,
+		hash='', phash=NULL, phash_tried=0
 		RETURNING id`,
 		m.Path, m.Size, m.ModTime, m.Kind, m.Taken, m.TakenSrc, m.TZOffset, m.Width, m.Height, lat, lon,
 		m.Camera, m.HasPreview, m.Error, m.IndexedAt).Scan(&id)
@@ -313,11 +328,16 @@ func (s *store) allPaths(fn func(id int64, fsPath string)) error {
 	return rows.Err()
 }
 
-// dateFilter restricts a query on the date taken.
+// dateFilter restricts a query on the date taken and the size.
 type dateFilter struct {
 	from        string // inclusive, takenLayout, empty means unbounded
 	to          string // exclusive, takenLayout, empty means unbounded
 	unknownOnly bool   // only files without a real date (taken from the mtime)
+	minSize     int64  // inclusive, 0 means unbounded
+	maxSize     int64  // inclusive, 0 means unbounded
+	sortBySize  bool   // largest first instead of newest first
+	onlyHashed  bool   // only files whose content hash is shared with another file
+	onlyPHash   bool   // only files with a perceptual hash
 }
 
 // query calls fn, newest first, for every file indexed inside one of dirs
@@ -347,8 +367,27 @@ func (s *store) query(dirs []string, f dateFilter, fn func(Media) bool) error {
 		where = append(where, `taken_src = ?`)
 		args = append(args, TakenSrcModTime)
 	}
+	if f.minSize > 0 {
+		where = append(where, `size >= ?`)
+		args = append(args, f.minSize)
+	}
+	if f.maxSize > 0 {
+		where = append(where, `size <= ?`)
+		args = append(args, f.maxSize)
+	}
+	if f.onlyHashed {
+		where = append(where, `hash NOT IN ('', 'error') AND hash IN
+			(SELECT hash FROM media WHERE hash NOT IN ('', 'error') GROUP BY hash HAVING COUNT(*) > 1)`)
+	}
+	if f.onlyPHash {
+		where = append(where, `phash IS NOT NULL`)
+	}
+	order := ` ORDER BY taken DESC, path`
+	if f.sortBySize {
+		order = ` ORDER BY size DESC, path`
+	}
 	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE `+strings.Join(where, " AND ")+
-		` ORDER BY taken DESC, path`, args...)
+		order, args...)
 	if err != nil {
 		return err
 	}
@@ -381,4 +420,78 @@ func (s *store) counts() (Counts, error) {
 		COALESCE(SUM(CASE WHEN error != '' THEN 1 ELSE 0 END), 0) FROM media`, TakenSrcModTime).
 		Scan(&c.Total, &c.WithDate, &c.WithPreview, &c.Errors)
 	return c, err
+}
+
+// hashCandidates returns up to limit files that share their size with another
+// file and whose content hash is not computed yet. Only these can be exact
+// duplicates, so most files are never read for hashing.
+func (s *store) hashCandidates(limit int) ([]Media, error) {
+	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE hash = '' AND size > 0 AND size IN
+		(SELECT size FROM media WHERE size > 0 GROUP BY size HAVING COUNT(*) > 1) ORDER BY size LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Media
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	return res, rows.Err()
+}
+
+// setHash stores the content hash, if the file was not changed meanwhile.
+func (s *store) setHash(m *Media, hash string) error {
+	_, err := s.db.Exec(`UPDATE media SET hash = ? WHERE id = ? AND size = ? AND mtime = ?`,
+		hash, m.ID, m.Size, m.ModTime)
+	return err
+}
+
+// phashCandidates returns up to limit images whose perceptual hash has not been
+// attempted yet.
+func (s *store) phashCandidates(limit int) ([]Media, error) {
+	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE phash IS NULL AND phash_tried = 0
+		AND kind != ? LIMIT ?`, KindVideo, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []Media
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, m)
+	}
+	return res, rows.Err()
+}
+
+// setPHash stores the perceptual hash (nil if it could not be computed), if
+// the file was not changed meanwhile.
+func (s *store) setPHash(m *Media, phash *int64) error {
+	var v any
+	if phash != nil {
+		v = *phash
+	}
+	_, err := s.db.Exec(`UPDATE media SET phash = ?, phash_tried = 1 WHERE id = ? AND size = ? AND mtime = ?`,
+		v, m.ID, m.Size, m.ModTime)
+	return err
+}
+
+// pendingDuplicateWork returns the number of files still to hash or
+// fingerprint.
+func (s *store) pendingDuplicateWork() (int64, error) {
+	var hashes, phashes int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM media WHERE hash = '' AND size > 0 AND size IN
+		(SELECT size FROM media WHERE size > 0 GROUP BY size HAVING COUNT(*) > 1)`).Scan(&hashes)
+	if err != nil {
+		return 0, err
+	}
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM media WHERE phash IS NULL AND phash_tried = 0 AND kind != ?`,
+		KindVideo).Scan(&phashes)
+	return hashes + phashes, err
 }

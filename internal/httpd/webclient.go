@@ -1376,9 +1376,7 @@ func (s *httpdServer) handleClientSearch(w http.ResponseWriter, r *http.Request)
 
 	startDir := connection.User.GetCleanedPath(r.URL.Query().Get("path"))
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	qLower := strings.ToLower(q)
 
-	results := make([]map[string]any, 0)
 	if q == "" {
 		// Nothing to search for: return an empty array in the standard shape.
 		streamJSONArray(w, defaultQueryLimit, func(_, _ int) ([]byte, int, error) {
@@ -1387,99 +1385,27 @@ func (s *httpdServer) handleClientSearch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Photo filters such as "taken:2023" are answered from the photo index.
-	if pq, err := photoindex.ParseQuery(q); err != nil {
+	pq, err := photoindex.ParseQuery(q)
+	if err != nil {
 		sendAPIResponse(w, r, err, i18nPhotoQueryInvalid, http.StatusBadRequest)
 		return
-	} else if pq.Photo {
+	}
+	// Photo filters such as "taken:2023" or "is:duplicate" are answered from
+	// the photo index.
+	if pq.Photo {
 		m := photoindex.Get()
 		if m == nil {
 			sendAPIResponse(w, r, nil, i18nPhotoIndexOff, http.StatusBadRequest)
 			return
 		}
+		if pq.Duplicates != photoindex.DupNone {
+			searchDuplicates(w, r, connection, m, startDir, pq)
+			return
+		}
 		searchPhotoIndex(w, r, connection, m, startDir, pq)
 		return
 	}
-
-	// Breadth-first walk starting at startDir, bounded by the safety caps.
-	queue := []string{startDir}
-	dirsWalked := 0
-	truncated := false
-
-	for len(queue) > 0 {
-		if dirsWalked >= maxSearchDirs {
-			truncated = true
-			break
-		}
-		dir := queue[0]
-		queue = queue[1:]
-		dirsWalked++
-
-		lister, err := connection.ReadDir(dir)
-		if err != nil {
-			// Skip directories the user cannot list or that no longer exist.
-			connection.Log(logger.LevelDebug, "search: skipping dir %q: %v", dir, err)
-			continue
-		}
-
-		for {
-			entries, err := lister.Next(defaultQueryLimit)
-			for _, info := range entries {
-				name := info.Name()
-				if info.IsDir() {
-					// Always recurse, whether or not the folder name itself matches.
-					queue = append(queue, path.Join(dir, name))
-				}
-				if !matchesSearchQuery(q, qLower, name) {
-					continue
-				}
-				res := make(map[string]any)
-				res["id"] = len(results) + 1
-				res["url"] = getFileObjectURL(dir, name, webClientFilesPath)
-				if info.IsDir() {
-					res["type"] = "1"
-					res["size"] = ""
-					res["dir_path"] = url.QueryEscape(path.Join(dir, name))
-				} else {
-					res["type"] = "2"
-					if info.Mode()&os.ModeSymlink != 0 {
-						res["size"] = ""
-					} else {
-						res["size"] = info.Size()
-						if info.Size() < httpdMaxEditFileSize {
-							res["edit_url"] = strings.Replace(res["url"].(string), webClientFilesPath, webClientEditFilePath, 1)
-						}
-					}
-				}
-				res["meta"] = fmt.Sprintf("%v_%v", res["type"], name)
-				res["name"] = name
-				res["last_modified"] = getFileObjectModTime(info.ModTime())
-				// Extra field (search only): the hit's parent directory, so the UI can
-				// show where each result lives and navigate to it.
-				res["path"] = dir
-				results = append(results, res)
-
-				if len(results) >= maxSearchResults {
-					truncated = true
-					break
-				}
-			}
-			if errors.Is(err, io.EOF) || err != nil || truncated {
-				break
-			}
-		}
-		lister.Close()
-
-		if truncated {
-			break
-		}
-	}
-
-	if truncated {
-		connection.Log(logger.LevelInfo, "search for %q under %q hit a safety cap (dirs walked: %d, results: %d); returning partial results",
-			q, startDir, dirsWalked, len(results))
-	}
-	streamSearchResults(w, results)
+	streamSearchResults(w, walkSearch(connection, startDir, pq))
 }
 
 // streamSearchResults streams search results as a JSON array.

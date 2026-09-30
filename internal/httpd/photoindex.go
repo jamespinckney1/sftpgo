@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,25 +85,10 @@ func searchPhotoIndex(w http.ResponseWriter, r *http.Request, connection *Connec
 		if !ok || !scope.Visible(vPath) {
 			return true
 		}
-		name := path.Base(vPath)
-		if text != "" && !matchesSearchQuery(text, textLower, name) {
+		if text != "" && !matchesSearchQuery(text, textLower, path.Base(vPath)) {
 			return true
 		}
-		dir := path.Dir(vPath)
-		res := make(map[string]any)
-		res["id"] = len(results) + 1
-		res["url"] = getFileObjectURL(dir, name, webClientFilesPath)
-		res["type"] = "2"
-		res["size"] = rec.Size
-		res["meta"] = fmt.Sprintf("2_%v", name)
-		res["name"] = name
-		res["last_modified"] = getFileObjectModTime(time.Unix(0, rec.ModTime))
-		res["path"] = dir
-		// Extra fields (photo search only). "taken" is the local wall clock
-		// time at which the photo was taken, deliberately without a zone.
-		res["taken"] = rec.TakenTime().Format("2006-01-02T15:04:05")
-		res["taken_src"] = rec.TakenSrc
-		results = append(results, res)
+		results = append(results, photoResultRow(len(results)+1, startDir, vPath, &rec))
 		if len(results) >= maxSearchResults {
 			truncated = true
 			return false
@@ -116,6 +102,82 @@ func searchPhotoIndex(w http.ResponseWriter, r *http.Request, connection *Connec
 	}
 	if truncated {
 		connection.Log(logger.LevelInfo, "photo search under %q hit the results cap (%d)", startDir, maxSearchResults)
+	}
+	streamSearchResults(w, results)
+}
+
+// photoResultRow returns an indexed file as a search result row, in the same
+// shape as the /dirs listing plus the "path" of the parent directory and the
+// photo fields.
+func photoResultRow(id int, startDir, vPath string, rec *photoindex.Media) map[string]any {
+	dir, name := path.Split(vPath)
+	dir = path.Clean(dir)
+	res := make(map[string]any)
+	res["id"] = id
+	res["url"] = getFileObjectURL(dir, name, webClientFilesPath)
+	res["type"] = "2"
+	res["size"] = rec.Size
+	res["meta"] = fmt.Sprintf("2_%v", searchRelPath(startDir, dir, name))
+	res["name"] = name
+	res["last_modified"] = getFileObjectModTime(time.Unix(0, rec.ModTime))
+	res["path"] = dir
+	// "taken" is the local wall clock time at which the photo was taken,
+	// deliberately without a zone.
+	res["taken"] = rec.TakenTime().Format("2006-01-02T15:04:05")
+	res["taken_src"] = rec.TakenSrc
+	if rec.Width > 0 && rec.Height > 0 {
+		res["width"] = rec.Width
+		res["height"] = rec.Height
+	}
+	return res
+}
+
+// searchDuplicates answers "is:duplicate" and "is:similar": groups of copies
+// among the files the user can see, the groups wasting the most space first
+// and, in each group, the copy suggested to keep first. Rows carry "group",
+// "group_size", "dup_exact", "keep" and "reclaimable" so the WebClient can
+// show the groups and preselect the extra copies.
+func searchDuplicates(w http.ResponseWriter, r *http.Request, connection *Connection, m *photoindex.Manager,
+	startDir string, q photoindex.Query,
+) {
+	scope := photoindex.NewUserScope(&connection.User, startDir)
+	visible := func(fsPath string) (string, bool) {
+		vPath, ok := scope.VirtualPath(fsPath)
+		if !ok || !scope.Visible(vPath) {
+			return "", false
+		}
+		return vPath, true
+	}
+	groups, err := m.FindDuplicates(scope.Dirs, q, visible)
+	if err != nil {
+		connection.Log(logger.LevelError, "duplicate search under %q failed: %v", startDir, err)
+		sendAPIResponse(w, r, err, "fs.dir_list.err_generic", http.StatusInternalServerError)
+		return
+	}
+	text := strings.TrimSpace(q.Text)
+	textLower := strings.ToLower(text)
+	results := make([]map[string]any, 0)
+	groupNum := 0
+	for _, g := range groups {
+		if text != "" && !slices.ContainsFunc(g.Files, func(f photoindex.DupFile) bool {
+			return matchesSearchQuery(text, textLower, path.Base(f.VirtualPath))
+		}) {
+			continue
+		}
+		if len(results)+len(g.Files) > maxSearchResults {
+			connection.Log(logger.LevelInfo, "duplicate search under %q hit the results cap (%d)", startDir, maxSearchResults)
+			break
+		}
+		groupNum++
+		for i := range g.Files {
+			res := photoResultRow(len(results)+1, startDir, g.Files[i].VirtualPath, &g.Files[i].Media)
+			res["group"] = groupNum
+			res["group_size"] = len(g.Files)
+			res["dup_exact"] = g.Exact
+			res["keep"] = g.Files[i].Keep
+			res["reclaimable"] = g.Reclaimable
+			results = append(results, res)
+		}
 	}
 	streamSearchResults(w, results)
 }

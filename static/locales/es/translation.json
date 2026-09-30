@@ -283,11 +283,21 @@
             "location": "Ubicación",
             "taken": "Tomada",
             "taken_unknown": "Sin fecha en los metadatos ni en el nombre: se muestra la fecha de modificación",
-            "photo_help": "Búsqueda de fotos: taken:2023, taken:2023-06, taken:2023-06-14, taken:2023-06..2023-08, taken:any, taken:unknown. Se puede combinar con un nombre, p. ej. \"playa taken:2021\"",
+            "photo_help": "Búsqueda: un nombre (comodines * y ?), fotos por fecha taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; duplicados is:duplicate (idénticos) o is:similar (parecidos); tamaño larger:100MB, smaller:1MB, sort:size. Se pueden combinar, p. ej. \"taken:2019 larger:10MB\"",
             "photo_indexing": "Indexando fotos: {{total}} indexadas.",
             "photo_indexing_progress": "Pasada actual: {{done}} de {{queued}}.",
             "photo_query_invalid": "Búsqueda de fotos no válida. Use por ejemplo taken:2023, taken:2023-06 o taken:2023-06..2023-08",
-            "photo_index_disabled": "La búsqueda de fotos no está habilitada en este servidor"
+            "photo_index_disabled": "La búsqueda de fotos no está habilitada en este servidor",
+            "size_help": "Búsqueda: un nombre (comodines * y ?); tamaño larger:100MB, smaller:1MB, sort:size (los más grandes primero). Se pueden combinar, p. ej. \"*.mov larger:1GB\"",
+            "duplicates": "Duplicados",
+            "dup_select": "Seleccionar copias sobrantes",
+            "dup_keep": "conservar",
+            "dup_exact": "idénticos",
+            "dup_similar": "parecidos",
+            "dup_copies": "{{count}} copias",
+            "dup_summary": "Grupos de copias idénticas: {{groups}}. Eliminar las copias sobrantes libera {{size}}.",
+            "similar_summary": "Grupos de fotos parecidas: {{groups}}. Eliminar las copias sobrantes liberaría {{size}}. Revise antes de eliminar: fotos parecidas pueden ser tomas distintas.",
+            "size_summary": "Archivos: {{count}}, tamaño total: {{size}}"
         },
         "view": {
             "toggle": "Alternar vista de cuadrícula"
