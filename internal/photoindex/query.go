@@ -37,6 +37,10 @@ import (
 //	is:duplicate                byte-identical copies, grouped
 //	is:similar                  visually similar photos (resized, re-encoded
 //	                            or exported copies), grouped
+//	person:rose                 photos showing a person whose name contains
+//	                            "rose"; person:"Grandma Rose" for spaces,
+//	                            person:#12 for a person by id. Repeat the
+//	                            filter for photos showing several people
 //
 // Size filters, for any file (with the photo filters, only photos/videos):
 //
@@ -56,7 +60,10 @@ type Query struct {
 	MaxSize int64
 	// SortBySize is true if the results should be listed largest first.
 	SortBySize bool
-	filter     dateFilter
+	// PersonTerms are the "person:" values; the photos must show a person
+	// matching each of them.
+	PersonTerms []string
+	filter      dateFilter
 }
 
 // DupMode is a duplicate detection mode.
@@ -87,7 +94,7 @@ var takenPartRe = regexp.MustCompile(`^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$`)
 func ParseQuery(q string) (Query, error) {
 	var res Query
 	var text []string
-	for _, tok := range strings.Fields(q) {
+	for _, tok := range splitQuery(q) {
 		key, value, found := strings.Cut(tok, ":")
 		if !found {
 			text = append(text, tok)
@@ -102,6 +109,13 @@ func ParseQuery(q string) (Query, error) {
 			err = res.addIsFilter(tok, strings.ToLower(value))
 		case "larger", "smaller":
 			err = res.addSizeFilter(tok, strings.ToLower(key), value)
+		case "person", "who":
+			value = strings.TrimSpace(value)
+			if value == "" {
+				err = fmt.Errorf("invalid filter %q, use person:name", tok)
+			}
+			res.PersonTerms = append(res.PersonTerms, value)
+			res.Photo = true
 		case "sort":
 			if !strings.EqualFold(value, "size") {
 				err = fmt.Errorf("invalid sort %q, use sort:size", tok)
@@ -119,6 +133,33 @@ func ParseQuery(q string) (Query, error) {
 	res.filter.maxSize = res.MaxSize
 	res.filter.sortBySize = res.SortBySize
 	return res, nil
+}
+
+// splitQuery splits a query on spaces, except inside double quotes, which
+// are removed: `person:"Grandma Rose" beach` gives `person:Grandma Rose` and
+// `beach`.
+func splitQuery(q string) []string {
+	var res []string
+	var cur strings.Builder
+	inQuotes := false
+	flush := func() {
+		if cur.Len() > 0 {
+			res = append(res, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range q {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+		case !inQuotes && (r == ' ' || r == '\t' || r == '\n'):
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return res
 }
 
 func (q *Query) addIsFilter(tok, value string) error {

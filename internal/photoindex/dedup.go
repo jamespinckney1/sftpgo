@@ -287,7 +287,10 @@ type Visibility func(fsPath string) (string, bool)
 // the files the user can see are considered: a group needs at least two of
 // them.
 func (m *Manager) FindDuplicates(dirs []string, q Query, visible Visibility) ([]DupGroup, error) {
-	f := q.filter
+	f, err := m.resolveFilter(q)
+	if err != nil {
+		return nil, err
+	}
 	var files []DupFile
 	if q.Duplicates == DupExact {
 		f.onlyHashed = true
@@ -295,7 +298,7 @@ func (m *Manager) FindDuplicates(dirs []string, q Query, visible Visibility) ([]
 		f.onlyPHash = true
 	}
 	f.sortBySize = false
-	err := m.store.query(dirs, f, func(rec Media) bool {
+	err = m.store.query(dirs, f, func(rec Media) bool {
 		if vp, ok := visible(rec.Path); ok {
 			files = append(files, DupFile{Media: rec, VirtualPath: vp})
 		}

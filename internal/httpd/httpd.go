@@ -163,6 +163,7 @@ const (
 	webClientSearchPathDefault            = "/web/client/search"
 	webClientThumbnailPathDefault         = "/web/client/thumbnail"
 	webClientPhotoStatusPathDefault       = "/web/client/photoindex/status"
+	webClientPeoplePathDefault            = "/web/client/people"
 	webClientDownloadZipPathDefault       = "/web/client/downloadzip"
 	webClientProfilePathDefault           = "/web/client/profile"
 	webClientPingPathDefault              = "/web/client/ping"
@@ -267,6 +268,7 @@ var (
 	webClientSearchPath            string
 	webClientThumbnailPath         string
 	webClientPhotoStatusPath       string
+	webClientPeoplePath            string
 	webClientDownloadZipPath       string
 	webClientProfilePath           string
 	webClientPingPath              string
@@ -1323,6 +1325,7 @@ func updateWebClientURLs(baseURL string) {
 	webClientSearchPath = path.Join(baseURL, webClientSearchPathDefault)
 	webClientThumbnailPath = path.Join(baseURL, webClientThumbnailPathDefault)
 	webClientPhotoStatusPath = path.Join(baseURL, webClientPhotoStatusPathDefault)
+	webClientPeoplePath = path.Join(baseURL, webClientPeoplePathDefault)
 	webClientDownloadZipPath = path.Join(baseURL, webClientDownloadZipPathDefault)
 	webClientProfilePath = path.Join(baseURL, webClientProfilePathDefault)
 	webClientPingPath = path.Join(baseURL, webClientPingPathDefault)

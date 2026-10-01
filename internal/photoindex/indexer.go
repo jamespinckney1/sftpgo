@@ -69,6 +69,10 @@ type Manager struct {
 	events        chan fsEvent
 	rescanCh      chan struct{}
 	dupCh         chan struct{}
+	faceCh        chan struct{}
+	ml            *mlClient
+	faces         *faceEngine
+	mlDown        atomic.Bool
 	stop          chan struct{}
 	wg            sync.WaitGroup
 
@@ -155,10 +159,19 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 		events:        make(chan fsEvent, eventQueueSize),
 		rescanCh:      make(chan struct{}, 1),
 		dupCh:         make(chan struct{}, 1),
+		faceCh:        make(chan struct{}, 1),
+		faces:         &faceEngine{clusters: map[int64]*faceCluster{}, threshold: float32(cfg.FaceMatchThreshold)},
 		stop:          make(chan struct{}),
 	}
 	if m.exiftoolPath != "" {
 		m.exif = newExiftool(m.exiftoolPath)
+	}
+	if cfg.MLURL != "" {
+		if cfg.FaceModel == "" {
+			cfg.FaceModel = "buffalo_l"
+		}
+		m.ml = newMLClient(cfg.MLURL, cfg.FaceModel, cfg.FaceMinScore)
+		logger.Info(logSender, "", "face recognition enabled, service %q, model %q", cfg.MLURL, cfg.FaceModel)
 	}
 	m.previewDisabled = cfg.PreviewSize <= 0 || m.vipsPath == ""
 	logger.Info(logSender, "", "photo index enabled, data dir %q, exiftool: %q, vipsthumbnail: %q, workers: %d",
@@ -179,8 +192,12 @@ func (m *Manager) start() {
 	m.wg.Go(m.eventLoop)
 	m.wg.Go(m.scanLoop)
 	m.wg.Go(m.dupLoop)
+	if m.ml != nil {
+		m.wg.Go(m.faceLoop)
+	}
 	// Pick up work left over from a previous run or a schema upgrade.
 	m.kickDuplicates()
+	m.kickFaces()
 }
 
 // Stop stops the background goroutines and closes the database.
@@ -351,6 +368,13 @@ func (m *Manager) scan() {
 	}
 	m.removeOrphans(roots)
 	m.kickDuplicates()
+	if m.ml != nil {
+		// Drop the faces of deleted photos from the groups.
+		if err := m.loadClusters(); err != nil {
+			logger.Warn(logSender, "", "unable to reload the face groups: %v", err)
+		}
+		m.kickFaces()
+	}
 	logger.Info(logSender, "", "photo index scan completed in %s, files queued: %d",
 		time.Since(start).Round(time.Second), m.scanQueued.Load())
 }
@@ -509,6 +533,7 @@ func (m *Manager) worker() {
 		m.inFlight.Add(-1)
 		m.processed.Add(1)
 		m.kickDuplicates()
+		m.kickFaces()
 		if m.cfg.PauseBetweenFiles > 0 {
 			if !m.sleep(time.Duration(m.cfg.PauseBetweenFiles) * time.Millisecond) {
 				return
@@ -770,7 +795,28 @@ func (m *Manager) enqueuePriority(p string) {
 // (absolute filesystem paths) matching the date filters in q, until fn
 // returns false. The caller is responsible for the access control.
 func (m *Manager) Search(dirs []string, q Query, fn func(Media) bool) error {
-	return m.store.query(dirs, q.filter, fn)
+	f, err := m.resolveFilter(q)
+	if err != nil {
+		return err
+	}
+	return m.store.query(dirs, f, fn)
+}
+
+// resolveFilter turns the "person:" terms of q into the ids of the matching
+// people. A term matching nobody matches no photo.
+func (m *Manager) resolveFilter(q Query) (dateFilter, error) {
+	f := q.filter
+	for _, term := range q.PersonTerms {
+		ids, err := m.resolvePeople(term)
+		if err != nil {
+			return f, err
+		}
+		if len(ids) == 0 {
+			ids = []int64{-1}
+		}
+		f.personSets = append(f.personSets, ids)
+	}
+	return f, nil
 }
 
 // Lookup returns the index entry for fsPath if it is up to date with the given
@@ -814,12 +860,13 @@ func (m *Manager) CanRender(name string) bool {
 // Status describes the index progress.
 type Status struct {
 	Counts
-	Scanning    bool  `json:"scanning"`
-	ScanQueued  int64 `json:"scan_queued"`
-	ScanDone    int64 `json:"scan_done"`
-	Pending     int   `json:"pending"`
-	DupPending  int64 `json:"dup_pending"`
-	LastScanEnd int64 `json:"last_scan_end,omitempty"`
+	Scanning    bool       `json:"scanning"`
+	ScanQueued  int64      `json:"scan_queued"`
+	ScanDone    int64      `json:"scan_done"`
+	Pending     int        `json:"pending"`
+	DupPending  int64      `json:"dup_pending"`
+	Faces       FaceStatus `json:"faces"`
+	LastScanEnd int64      `json:"last_scan_end,omitempty"`
 }
 
 // Status returns the index progress.
@@ -839,6 +886,7 @@ func (m *Manager) Status() Status {
 		ScanDone:    m.scanDone.Load(),
 		Pending:     len(m.prioQueue) + len(m.backfillQueue),
 		DupPending:  dupPending,
+		Faces:       m.faceStatus(),
 		LastScanEnd: m.lastScanEnd.Load(),
 	}
 }

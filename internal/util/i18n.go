@@ -26,6 +26,7 @@ const (
 	I18nShareLoginTitle                = "title.share_login"
 	I18nFilesTitle                     = "title.files"
 	I18nSharesTitle                    = "title.shares"
+	I18nPeopleTitle                    = "title.people"
 	I18nShareAddTitle                  = "title.add_share"
 	I18nShareUpdateTitle               = "title.update_share"
 	I18nProfileTitle                   = "title.profile"

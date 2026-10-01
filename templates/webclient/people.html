@@ -1,0 +1,410 @@
+<!--
+Copyright (C) 2023 Nicola Murino
+
+This WebUI uses the KeenThemes Bootstrap Templates:
+
+https://keenthemes.com/bootstrap-templates
+
+KeenThemes HTML/CSS/JS components are allowed for use only within the
+SFTPGo product and restricted to be used in a resealable HTML template
+that can compete with KeenThemes products anyhow.
+
+This WebUI is allowed for use only within the SFTPGo product and
+therefore cannot be used in derivative works/products without an
+explicit grant from the SFTPGo Team (support@sftpgo.com).
+-->
+<!-- Fork feature: People (face recognition), see FORK_FEATURES.md -->
+{{- template "base" .}}
+
+{{- define "extra_css"}}
+<style {{- if .CSPNonce}} nonce="{{.CSPNonce}}"{{- end}}>
+    .people-grid, .faces-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 1.25rem;
+    }
+    .person-card {
+        cursor: pointer;
+        text-align: center;
+        border: 1px solid var(--bs-gray-200);
+        border-radius: 0.75rem;
+        padding: 1rem 0.5rem 0.75rem;
+        transition: box-shadow .15s, border-color .15s;
+    }
+    .person-card:hover { border-color: var(--bs-primary); box-shadow: 0 0.25rem 1rem rgba(0,0,0,.08); }
+    .person-card.is-hidden { opacity: 0.55; }
+    .person-card img, .face-card img {
+        width: 104px;
+        height: 104px;
+        border-radius: 50%;
+        object-fit: cover;
+        background: var(--bs-gray-200);
+    }
+    .person-card .person-name {
+        margin-top: 0.6rem;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .person-card .person-name.unnamed { color: var(--bs-gray-500); font-style: italic; }
+    .face-card {
+        position: relative;
+        text-align: center;
+        border: 2px solid transparent;
+        border-radius: 0.75rem;
+        padding: 0.5rem;
+        cursor: pointer;
+    }
+    .face-card.selected { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), 0.06); }
+    .face-card .form-check { position: absolute; top: 0.5rem; left: 0.5rem; }
+    .face-card .face-file {
+        font-size: 0.75rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 0.4rem;
+    }
+</style>
+{{- end}}
+
+{{- define "page_body"}}
+{{- template "errmsg" ""}}
+<div class="card shadow-sm">
+    <!-- List of people -->
+    <div id="people_list_view">
+        <div class="card-header bg-light">
+            <h3 data-i18n="title.people" class="card-title section-title">People</h3>
+        </div>
+        <div class="card-body">
+            <div class="d-flex flex-stack flex-wrap mb-5 gap-3">
+                <div class="d-flex align-items-center position-relative">
+                    <i class="ki-solid ki-magnifier fs-1 position-absolute ms-6"></i>
+                    <input id="people_filter" type="text" data-i18n="[placeholder]people.filter"
+                        class="form-control rounded-1 w-250px ps-15" placeholder="Filter by name" />
+                </div>
+                <div class="d-flex align-items-center gap-5">
+                    <div class="form-check form-switch form-check-custom form-check-solid">
+                        <input class="form-check-input" type="checkbox" id="people_show_all" />
+                        <label data-i18n="people.show_single" class="form-check-label" for="people_show_all">Show groups with a single face</label>
+                    </div>
+                    <div class="form-check form-switch form-check-custom form-check-solid">
+                        <input class="form-check-input" type="checkbox" id="people_show_hidden" />
+                        <label data-i18n="people.show_hidden" class="form-check-label" for="people_show_hidden">Show hidden</label>
+                    </div>
+                </div>
+            </div>
+            <div id="people_status" class="text-muted fs-7 mb-5 d-none"></div>
+            <div id="people_loader" class="text-center my-10">
+                <span class="spinner-border w-15px h-15px text-muted align-middle me-2"></span>
+                <span data-i18n="general.loading" class="text-gray-700">Loading...</span>
+            </div>
+            <div id="people_empty" data-i18n="people.empty" class="text-muted text-center my-10 d-none">No people found yet: faces appear here as photos are processed.</div>
+            <h4 id="people_named_title" data-i18n="people.named" class="mb-4 d-none">Named</h4>
+            <div id="people_named" class="people-grid mb-10"></div>
+            <h4 id="people_unnamed_title" data-i18n="people.unnamed_title" class="mb-2 d-none">Who is this?</h4>
+            <div id="people_unnamed_help" data-i18n="people.unnamed_help" class="text-muted fs-7 mb-4 d-none">Faces grouped automatically. Open a group to name it; giving two groups the same name merges them.</div>
+            <div id="people_unnamed" class="people-grid"></div>
+            <div class="text-center mt-8">
+                <button id="people_more" type="button" data-i18n="people.show_more" class="btn btn-light d-none">Show more</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- One person -->
+    <div id="person_view" class="d-none">
+        <div class="card-header bg-light">
+            <div class="card-title d-flex align-items-center gap-3">
+                <button id="person_back" type="button" class="btn btn-icon btn-sm btn-light" data-i18n="[title]people.back" title="Back">
+                    <i class="ki-duotone ki-arrow-left fs-2"><span class="path1"></span><span class="path2"></span></i>
+                </button>
+                <h3 id="person_title" class="section-title m-0"></h3>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-end gap-3 mb-8">
+                <div class="flex-grow-1 mw-400px">
+                    <label data-i18n="people.name" for="person_name" class="form-label">Name</label>
+                    <input id="person_name" type="text" class="form-control" list="people_names" autocomplete="off" maxlength="100" />
+                </div>
+                <button id="person_save" type="button" data-i18n="people.save_name" class="btn btn-primary">Save name</button>
+                <a id="person_photos" href="#" data-i18n="people.view_photos" class="btn btn-light-primary">View photos</a>
+                <button id="person_hide" type="button" data-i18n="people.hide" class="btn btn-light">Hide</button>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-3 mb-5">
+                <div class="form-check form-check-custom form-check-solid">
+                    <input class="form-check-input" type="checkbox" id="faces_select_all" />
+                    <label data-i18n="people.select_all" class="form-check-label" for="faces_select_all">Select all</label>
+                </div>
+                <span id="faces_selected" class="text-muted fs-7"></span>
+                <div class="ms-auto d-flex flex-wrap gap-2">
+                    <button id="faces_remove" type="button" data-i18n="people.not_this_person" class="btn btn-sm btn-light-danger" disabled>Not this person</button>
+                    <input id="faces_move_name" type="text" class="form-control form-control-sm w-200px" list="people_names"
+                        data-i18n="[placeholder]people.move_placeholder" placeholder="Name of the right person" autocomplete="off" maxlength="100" />
+                    <button id="faces_move" type="button" data-i18n="people.move" class="btn btn-sm btn-light-primary" disabled>Move</button>
+                </div>
+            </div>
+            <div id="faces_grid" class="faces-grid"></div>
+        </div>
+    </div>
+</div>
+<datalist id="people_names"></datalist>
+{{- end}}
+
+{{- define "extra_js"}}
+<script type="text/javascript" {{- if .CSPNonce}} nonce="{{.CSPNonce}}"{{- end}}>
+    (function () {
+        const LIST_URL = '{{.PeopleListURL}}';
+        const FACES_URL = '{{.PersonFacesURL}}';
+        const FACE_URL = '{{.FaceURL}}';
+        const ACTION_URL = '{{.PeopleActionURL}}';
+        const FILES_URL = '{{.FilesURL}}';
+        const PAGE_SIZE = 120;
+
+        let people = [];
+        let names = [];
+        let shown = PAGE_SIZE;
+        let current = null; // person shown in the detail view
+        let selected = new Set();
+
+        function attr(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
+
+        function showError(err) {
+            let msg = "general.error";
+            if (err && err.response && err.response.status == 404) {
+                msg = "people.not_found";
+            }
+            showToast(0, msg);
+        }
+
+        function personCard(p) {
+            let name = p.name ? `<div class="person-name" title="${attr(p.name)}">${escapeHTML(p.name)}</div>` :
+                `<div class="person-name unnamed">${escapeHTML($.t('people.unnamed'))}</div>`;
+            return `<div class="person-card ${p.hidden ? 'is-hidden' : ''}" data-id="${p.id}">
+                        <img loading="lazy" src="${FACE_URL}?id=${p.cover}" alt="">
+                        ${name}
+                        <div class="text-muted fs-7">${escapeHTML($.t('people.photo_count', { count: p.photos }))}</div>
+                    </div>`;
+        }
+
+        function renderList() {
+            let filter = $('#people_filter').val().trim().toLowerCase();
+            let showHidden = $('#people_show_hidden').is(':checked');
+            let visible = people.filter(function (p) {
+                if (p.hidden && !showHidden) {
+                    return false;
+                }
+                return !filter || (p.name && p.name.toLowerCase().includes(filter));
+            });
+            let named = visible.filter(p => p.name);
+            let unnamed = filter ? [] : visible.filter(p => !p.name);
+            $('#people_named').html(named.map(personCard).join(""));
+            $('#people_unnamed').html(unnamed.slice(0, shown).map(personCard).join(""));
+            $('#people_named_title').toggleClass('d-none', named.length == 0);
+            $('#people_unnamed_title, #people_unnamed_help').toggleClass('d-none', unnamed.length == 0);
+            $('#people_more').toggleClass('d-none', unnamed.length <= shown);
+            $('#people_empty').toggleClass('d-none', visible.length > 0);
+        }
+
+        function renderStatus(st) {
+            let el = $('#people_status');
+            let parts = [];
+            if (st && st.service_off) {
+                parts.push($.t('people.service_off'));
+            }
+            if (st && st.pending > 0) {
+                parts.push($.t('people.pending', { count: Number(st.pending).toLocaleString() }));
+            }
+            el.text(parts.join(" ")).toggleClass('d-none', parts.length == 0);
+        }
+
+        function loadList() {
+            let all = $('#people_show_all').is(':checked') ? '1' : '0';
+            $('#people_loader').removeClass('d-none');
+            return axios.get(LIST_URL + '?all=' + all, { timeout: 60000 }).then(function (resp) {
+                people = resp.data.people || [];
+                names = resp.data.names || [];
+                $('#people_names').html(names.map(n => `<option value="${attr(n)}"></option>`).join(""));
+                renderStatus(resp.data.status);
+                renderList();
+            }).catch(showError).finally(function () {
+                $('#people_loader').addClass('d-none');
+            });
+        }
+
+        function showListView() {
+            current = null;
+            $('#person_view').addClass('d-none');
+            $('#people_list_view').removeClass('d-none');
+            history.replaceState(null, '', window.location.pathname);
+            loadList();
+        }
+
+        function updateSelection() {
+            let n = selected.size;
+            $('#faces_selected').text(n ? $.t('people.selected', { count: n }) : '');
+            $('#faces_remove, #faces_move').prop('disabled', n == 0);
+            $('#faces_select_all').prop('checked', n > 0 && n == $('#faces_grid .face-card').length);
+        }
+
+        function openPerson(id) {
+            selected.clear();
+            updateSelection();
+            $('#faces_grid').html('');
+            $('#people_list_view').addClass('d-none');
+            $('#person_view').removeClass('d-none');
+            history.replaceState(null, '', window.location.pathname + '?person=' + id);
+            return axios.get(FACES_URL + '?id=' + id, { timeout: 60000 }).then(function (resp) {
+                current = resp.data.person;
+                let title = current.name || $.t('people.unnamed');
+                $('#person_title').text(title);
+                $('#person_name').val(current.name || '');
+                $('#person_photos').attr('href', FILES_URL + '?path=%2F&q=' + encodeURIComponent('person:#' + current.id));
+                setI18NData($('#person_hide'), current.hidden ? 'people.unhide' : 'people.hide');
+                let html = (resp.data.faces || []).map(function (f) {
+                    return `<div class="face-card" data-id="${f.id}">
+                                <div class="form-check form-check-sm form-check-custom form-check-solid">
+                                    <input class="form-check-input" type="checkbox" />
+                                </div>
+                                <img loading="lazy" src="${FACE_URL}?id=${f.id}" alt="">
+                                <div class="face-file"><a href="${attr(f.dir_url)}" title="${attr(f.path + '/' + f.name)}">${escapeHTML(f.name)}</a></div>
+                            </div>`;
+                }).join("");
+                $('#faces_grid').html(html);
+            }).catch(function (err) {
+                showError(err);
+                showListView();
+            });
+        }
+
+        function doAction(payload) {
+            KTApp.showPageLoading();
+            return axios.post(ACTION_URL, payload, {
+                timeout: 60000,
+                headers: { 'X-CSRF-TOKEN': '{{.CSRFToken}}' }
+            }).finally(function () {
+                KTApp.hidePageLoading();
+            });
+        }
+
+        function saveName() {
+            let name = $('#person_name').val().trim().replace(/\s+/g, ' ');
+            if (!name || !current) {
+                return;
+            }
+            let existing = names.find(n => n.toLowerCase() == name.toLowerCase() && n != current.name);
+            let run = function () {
+                doAction({ action: 'rename', person_id: current.id, name: name }).then(function (resp) {
+                    showToast(1, 'people.saved');
+                    openPerson(resp.data.person_id);
+                    loadList();
+                }).catch(showError);
+            };
+            if (!existing || existing.toLowerCase() == (current.name || '').toLowerCase()) {
+                run();
+                return;
+            }
+            ModalAlert.fire({
+                text: $.t('people.merge_confirm', { name: existing }),
+                icon: "question",
+                confirmButtonText: $.t('people.merge'),
+                cancelButtonText: $.t('general.cancel'),
+                customClass: { confirmButton: "btn btn-primary", cancelButton: 'btn btn-secondary' }
+            }).then(function (result) {
+                if (result.isConfirmed) {
+                    run();
+                }
+            });
+        }
+
+        function moveSelected(name) {
+            if (!current || selected.size == 0) {
+                return;
+            }
+            doAction({ action: 'move_faces', face_ids: Array.from(selected), name: name }).then(function () {
+                $('#faces_move_name').val('');
+                openPerson(current.id);
+            }).catch(showError);
+        }
+
+        $(document).ready(function () {
+            $('#people_filter').on('input', renderList);
+            $('#people_show_hidden').on('change', renderList);
+            $('#people_show_all').on('change', loadList);
+            $('#people_more').on('click', function () {
+                shown += PAGE_SIZE;
+                renderList();
+            });
+            $('#people_named, #people_unnamed').on('click', '.person-card', function () {
+                openPerson($(this).data('id'));
+            });
+            $('#person_back').on('click', showListView);
+            $('#person_save').on('click', saveName);
+            $('#person_name').on('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveName();
+                }
+            });
+            $('#person_hide').on('click', function () {
+                if (!current) {
+                    return;
+                }
+                doAction({ action: current.hidden ? 'unhide' : 'hide', person_id: current.id }).then(function () {
+                    if (current.hidden) {
+                        openPerson(current.id);
+                    } else {
+                        showListView();
+                    }
+                }).catch(showError);
+            });
+            $('#faces_grid').on('click', '.face-card', function (e) {
+                if ($(e.target).closest('a').length) {
+                    return; // the file link
+                }
+                let id = $(this).data('id');
+                let on = !selected.has(id);
+                if (on) {
+                    selected.add(id);
+                } else {
+                    selected.delete(id);
+                }
+                $(this).toggleClass('selected', on).find('input').prop('checked', on);
+                updateSelection();
+            });
+            $('#faces_select_all').on('change', function () {
+                let on = $(this).is(':checked');
+                $('#faces_grid .face-card').each(function () {
+                    let id = $(this).data('id');
+                    if (on) {
+                        selected.add(id);
+                    } else {
+                        selected.delete(id);
+                    }
+                    $(this).toggleClass('selected', on).find('input').prop('checked', on);
+                });
+                updateSelection();
+            });
+            $('#faces_remove').on('click', function () {
+                moveSelected('');
+            });
+            $('#faces_move').on('click', function () {
+                let name = $('#faces_move_name').val().trim();
+                if (name) {
+                    moveSelected(name);
+                }
+            });
+
+            let params = new URLSearchParams(window.location.search);
+            if (params.get('person')) {
+                loadList();
+                openPerson(params.get('person'));
+            } else {
+                loadList();
+            }
+        });
+    })();
+</script>
+{{- end}}

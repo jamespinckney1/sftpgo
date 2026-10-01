@@ -67,21 +67,39 @@ type Config struct {
 	// generate previews. If empty it is looked up in the PATH; if it is not
 	// found no previews are generated.
 	VipsPath string `json:"vips_path" mapstructure:"vips_path"`
+	// MLURL is the URL of the face recognition service, the Immich
+	// machine-learning container, e.g. "http://immich-ml:3003". Empty
+	// disables face recognition.
+	MLURL string `json:"ml_url" mapstructure:"ml_url"`
+	// FaceModel is the face model the service uses. Default "buffalo_l", the
+	// most accurate; "buffalo_s" is faster and lighter.
+	FaceModel string `json:"face_model" mapstructure:"face_model"`
+	// FaceMinScore is the minimum detection confidence, 0..1, for a face to be
+	// kept. Default 0.7.
+	FaceMinScore float64 `json:"face_min_score" mapstructure:"face_min_score"`
+	// FaceMatchThreshold is the minimum similarity, 0..1, between a face and
+	// a person for the face to be added to that person automatically. Higher
+	// is stricter: fewer mistakes, more groups to merge by hand. Default 0.5.
+	FaceMatchThreshold float64 `json:"face_match_threshold" mapstructure:"face_match_threshold"`
 }
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		Enabled:           false,
-		DataDir:           "photoindex",
-		PreviewSize:       1024,
-		RescanInterval:    24,
-		StartupDelay:      60,
-		Workers:           1,
-		PauseBetweenFiles: 0,
-		MaxSourceSize:     200,
-		ExiftoolPath:      "",
-		VipsPath:          "",
+		Enabled:            false,
+		DataDir:            "photoindex",
+		PreviewSize:        1024,
+		RescanInterval:     24,
+		StartupDelay:       60,
+		Workers:            1,
+		PauseBetweenFiles:  0,
+		MaxSourceSize:      200,
+		ExiftoolPath:       "",
+		VipsPath:           "",
+		MLURL:              "",
+		FaceModel:          "buffalo_l",
+		FaceMinScore:       0.7,
+		FaceMatchThreshold: 0.5,
 	}
 }
 

@@ -1476,7 +1476,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         var searchKind = "name";
 
         function isPhotoQuery(q) {
-            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is):/i.test(q);
+            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is|person|who):/i.test(q);
         }
 
         function getSearchKind(q) {
@@ -1595,19 +1595,24 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                             el.classList.add('d-none');
                             return;
                         }
-                        let busy = st.scanning || st.pending > 0;
-                        if (!busy) {
+                        let indexing = st.scanning || st.pending > 0;
+                        let faces = st.faces && st.faces.enabled && !st.faces.service_off && st.faces.pending > 0;
+                        if (!indexing && !faces) {
                             el.classList.add('d-none');
                             setTimeout(poll, 300000);
                             return;
                         }
-                        let total = Number(st.total).toLocaleString();
-                        let txt = $.t('fs.search.photo_indexing', { total: total });
-                        if (st.scan_queued > 0) {
-                            txt += " " + $.t('fs.search.photo_indexing_progress', {
-                                done: Number(Math.min(st.scan_done, st.scan_queued)).toLocaleString(),
-                                queued: Number(st.scan_queued).toLocaleString()
-                            });
+                        let txt;
+                        if (indexing) {
+                            txt = $.t('fs.search.photo_indexing', { total: Number(st.total).toLocaleString() });
+                            if (st.scan_queued > 0) {
+                                txt += " " + $.t('fs.search.photo_indexing_progress', {
+                                    done: Number(Math.min(st.scan_done, st.scan_queued)).toLocaleString(),
+                                    queued: Number(st.scan_queued).toLocaleString()
+                                });
+                            }
+                        } else {
+                            txt = $.t('fs.search.photo_faces', { count: Number(st.faces.pending).toLocaleString() });
                         }
                         el.textContent = txt;
                         el.classList.remove('d-none');
@@ -1653,6 +1658,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     trigger(true);
                 }
             });
+            // A search can be opened by link, e.g. "View photos" on the People page.
+            let initial = new URLSearchParams(window.location.search).get('q');
+            if (initial) {
+                filterSearch.value = initial;
+                trigger(true);
+            }
         }
 
         var initToggleToolbar = function () {

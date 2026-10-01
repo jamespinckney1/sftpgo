@@ -399,7 +399,11 @@
       "pause_between_files": 0,
       "max_source_size": 200,
       "exiftool_path": "",
-      "vips_path": ""
+      "vips_path": "",
+      "ml_url": "",
+      "face_model": "buffalo_l",
+      "face_min_score": 0.7,
+      "face_match_threshold": 0.5
     },
     "hide_support_link": false
   },

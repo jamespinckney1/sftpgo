@@ -24,7 +24,7 @@ import (
 
 // schemaVersion is the current version of the index schema. Later phases (CLIP
 // embeddings, faces) add tables through new migrations.
-const schemaVersion = 2
+const schemaVersion = 3
 
 var migrations = []string{
 	// version 1
@@ -55,6 +55,38 @@ var migrations = []string{
 	ALTER TABLE media ADD COLUMN phash_tried INTEGER NOT NULL DEFAULT 0;
 	CREATE INDEX media_size_idx ON media(size);
 	CREATE INDEX media_hash_idx ON media(hash) WHERE hash != '';`,
+	// version 3: faces. faces_state is 0 (to do), 1 (done) or 2 (failed).
+	// Boxes are relative to the image (0..1); embeddings are 512 float32,
+	// little endian, unit length. A locked face was placed by a user and is
+	// never moved automatically. Faces follow their photo: they are deleted
+	// with it and when its content changes.
+	`ALTER TABLE media ADD COLUMN faces_state INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX media_faces_todo_idx ON media(faces_state) WHERE faces_state = 0;
+	CREATE TABLE people (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL DEFAULT '',
+		hidden INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE faces (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER NOT NULL,
+		person_id INTEGER,
+		x1 REAL NOT NULL, y1 REAL NOT NULL, x2 REAL NOT NULL, y2 REAL NOT NULL,
+		score REAL NOT NULL,
+		embedding BLOB NOT NULL,
+		locked INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX faces_media_idx ON faces(media_id);
+	CREATE INDEX faces_person_idx ON faces(person_id);
+	CREATE TRIGGER media_delete_faces AFTER DELETE ON media BEGIN
+		DELETE FROM faces WHERE media_id = OLD.id;
+	END;
+	CREATE TRIGGER media_change_faces AFTER UPDATE OF size, mtime ON media
+		WHEN OLD.size != NEW.size OR OLD.mtime != NEW.mtime BEGIN
+		DELETE FROM faces WHERE media_id = NEW.id;
+	END;`,
 }
 
 // Media is an indexed photo or video.
@@ -211,7 +243,7 @@ func (s *store) upsert(m *Media) (int64, error) {
 		taken=excluded.taken, taken_src=excluded.taken_src, tz_offset=excluded.tz_offset, width=excluded.width,
 		height=excluded.height, lat=excluded.lat, lon=excluded.lon, camera=excluded.camera,
 		has_preview=excluded.has_preview, error=excluded.error, indexed_at=excluded.indexed_at,
-		hash='', phash=NULL, phash_tried=0
+		hash='', phash=NULL, phash_tried=0, faces_state=0
 		RETURNING id`,
 		m.Path, m.Size, m.ModTime, m.Kind, m.Taken, m.TakenSrc, m.TZOffset, m.Width, m.Height, lat, lon,
 		m.Camera, m.HasPreview, m.Error, m.IndexedAt).Scan(&id)
@@ -338,6 +370,8 @@ type dateFilter struct {
 	sortBySize  bool   // largest first instead of newest first
 	onlyHashed  bool   // only files whose content hash is shared with another file
 	onlyPHash   bool   // only files with a perceptual hash
+	// personSets: for each set, the photo must show one of its people.
+	personSets [][]int64
 }
 
 // query calls fn, newest first, for every file indexed inside one of dirs
@@ -346,48 +380,12 @@ func (s *store) query(dirs []string, f dateFilter, fn func(Media) bool) error {
 	if len(dirs) == 0 {
 		return nil
 	}
-	var where []string
-	var args []any
-	var dirConds []string
-	for _, d := range dirs {
-		lo, hi := prefixRange(d)
-		dirConds = append(dirConds, `(path >= ? AND path < ?)`)
-		args = append(args, lo, hi)
-	}
-	where = append(where, "("+strings.Join(dirConds, " OR ")+")")
-	if f.from != "" {
-		where = append(where, `taken >= ?`)
-		args = append(args, f.from)
-	}
-	if f.to != "" {
-		where = append(where, `taken < ?`)
-		args = append(args, f.to)
-	}
-	if f.unknownOnly {
-		where = append(where, `taken_src = ?`)
-		args = append(args, TakenSrcModTime)
-	}
-	if f.minSize > 0 {
-		where = append(where, `size >= ?`)
-		args = append(args, f.minSize)
-	}
-	if f.maxSize > 0 {
-		where = append(where, `size <= ?`)
-		args = append(args, f.maxSize)
-	}
-	if f.onlyHashed {
-		where = append(where, `hash NOT IN ('', 'error') AND hash IN
-			(SELECT hash FROM media WHERE hash NOT IN ('', 'error') GROUP BY hash HAVING COUNT(*) > 1)`)
-	}
-	if f.onlyPHash {
-		where = append(where, `phash IS NOT NULL`)
-	}
+	where, args := f.where(dirs)
 	order := ` ORDER BY taken DESC, path`
 	if f.sortBySize {
 		order = ` ORDER BY size DESC, path`
 	}
-	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE `+strings.Join(where, " AND ")+
-		order, args...)
+	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE `+where+order, args...)
 	if err != nil {
 		return err
 	}
@@ -402,6 +400,55 @@ func (s *store) query(dirs []string, f dateFilter, fn func(Media) bool) error {
 		}
 	}
 	return rows.Err()
+}
+
+// where returns the SQL conditions, and their arguments, selecting the files
+// inside dirs that match the filter.
+func (f *dateFilter) where(dirs []string) (string, []any) {
+	var where []string
+	var args []any
+	var dirConds []string
+	for _, d := range dirs {
+		lo, hi := prefixRange(d)
+		dirConds = append(dirConds, `(path >= ? AND path < ?)`)
+		args = append(args, lo, hi)
+	}
+	where = append(where, "("+strings.Join(dirConds, " OR ")+")")
+	add := func(cond string, a ...any) {
+		where = append(where, cond)
+		args = append(args, a...)
+	}
+	if f.from != "" {
+		add(`taken >= ?`, f.from)
+	}
+	if f.to != "" {
+		add(`taken < ?`, f.to)
+	}
+	if f.unknownOnly {
+		add(`taken_src = ?`, TakenSrcModTime)
+	}
+	if f.minSize > 0 {
+		add(`size >= ?`, f.minSize)
+	}
+	if f.maxSize > 0 {
+		add(`size <= ?`, f.maxSize)
+	}
+	if f.onlyHashed {
+		add(`hash NOT IN ('', 'error') AND hash IN
+			(SELECT hash FROM media WHERE hash NOT IN ('', 'error') GROUP BY hash HAVING COUNT(*) > 1)`)
+	}
+	if f.onlyPHash {
+		add(`phash IS NOT NULL`)
+	}
+	for _, ids := range f.personSets {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		a := make([]any, len(ids))
+		for i, id := range ids {
+			a[i] = id
+		}
+		add(`id IN (SELECT media_id FROM faces WHERE person_id IN (`+ph+`))`, a...)
+	}
+	return strings.Join(where, " AND "), args
 }
 
 // Counts summarizes the index content.

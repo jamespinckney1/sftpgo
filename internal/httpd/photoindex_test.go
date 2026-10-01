@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -34,9 +36,13 @@ import (
 	"github.com/drakkan/sftpgo/v2/internal/dataprovider"
 	"github.com/drakkan/sftpgo/v2/internal/httpdtest"
 	"github.com/drakkan/sftpgo/v2/internal/photoindex"
+	"github.com/drakkan/sftpgo/v2/internal/photoindex/mltest"
 )
 
-const webClientPhotoStatusPath = "/web/client/photoindex/status"
+const (
+	webClientPhotoStatusPath = "/web/client/photoindex/status"
+	webClientPeoplePath      = "/web/client/people"
+)
 
 func testJPEG(t *testing.T) []byte {
 	t.Helper()
@@ -336,4 +342,210 @@ func TestWebClientCleanupSearch(t *testing.T) {
 	checkResponseCode(t, http.StatusOK, rr)
 	assert.Empty(t, search("/", "is:duplicate"), "the group disappears right away")
 	assert.FileExists(t, filepath.Join(home, "2019", "IMG_20190501_101010.jpg"))
+}
+
+func facePhotoJPEG(t *testing.T, identities ...int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{128, 128, 128, 255}}, image.Point{}, draw.Src)
+	for i, id := range identities {
+		mltest.DrawFace(img, id, 30+i*150, 100+i*20, 64)
+	}
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}))
+	return buf.Bytes()
+}
+
+func TestWebClientPeople(t *testing.T) {
+	ml := mltest.NewServer()
+	defer ml.Close()
+
+	// Two users: the second one cannot see the first one's home.
+	u := getTestUser()
+	u.Permissions["/private"] = []string{dataprovider.PermUpload}
+	user, _, err := httpdtest.AddUser(u, http.StatusCreated)
+	require.NoError(t, err)
+	u2 := getTestUser()
+	u2.Username = defaultUsername + "_2"
+	u2.HomeDir = filepath.Join(filepath.Dir(user.GetHomeDir()), u2.Username)
+	user2, _, err := httpdtest.AddUser(u2, http.StatusCreated)
+	require.NoError(t, err)
+	defer func() {
+		photoindex.Initialize(photoindex.Config{}, "", nil) //nolint:errcheck
+		for _, usr := range []dataprovider.User{user, user2} {
+			_, err = httpdtest.RemoveUser(usr, http.StatusOK)
+			assert.NoError(t, err)
+			assert.NoError(t, os.RemoveAll(usr.GetHomeDir()))
+		}
+	}()
+	const red, blue, green = 0, 1, 2
+	write := func(p string, data []byte) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), os.ModePerm))
+		require.NoError(t, os.WriteFile(p, data, os.ModePerm))
+	}
+	home, home2 := user.GetHomeDir(), user2.GetHomeDir()
+	write(filepath.Join(home, "a.jpg"), facePhotoJPEG(t, red, blue))
+	write(filepath.Join(home, "b.jpg"), facePhotoJPEG(t, red))
+	write(filepath.Join(home, "private", "c.jpg"), facePhotoJPEG(t, green)) // not listable by user
+	write(filepath.Join(home2, "d.jpg"), facePhotoJPEG(t, red, green))
+
+	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent",
+		MLURL: ml.URL, FaceModel: "buffalo_l", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}, []string{home, home2}, 4)
+	require.Eventually(t, func() bool {
+		st := photoindex.Get().Status().Faces
+		return st.Pending == 0 && st.Faces == 6
+	}, 30*time.Second, 100*time.Millisecond)
+
+	token1, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	require.NoError(t, err)
+	token2, err := getJWTWebClientTokenFromTestServer(u2.Username, defaultPassword)
+	require.NoError(t, err)
+	csrf1, err := getCSRFTokenFromInternalPageMock(webClientProfilePath, token1)
+	require.NoError(t, err)
+
+	get := func(token, reqURL string, expected int) []byte {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+		setJWTCookieForReq(req, token)
+		rr := executeRequest(req)
+		checkResponseCode(t, expected, rr)
+		return rr.Body.Bytes()
+	}
+	type personJSON struct {
+		ID     int64  `json:"id"`
+		Name   string `json:"name"`
+		Faces  int    `json:"faces"`
+		Photos int    `json:"photos"`
+		Cover  int64  `json:"cover"`
+		Hidden bool   `json:"hidden"`
+	}
+	list := func(token string) []personJSON {
+		t.Helper()
+		var resp struct {
+			People []personJSON `json:"people"`
+			Names  []string     `json:"names"`
+		}
+		require.NoError(t, json.Unmarshal(get(token, webClientPeoplePath+"/list?all=1", http.StatusOK), &resp))
+		return resp.People
+	}
+	action := func(payload map[string]any, expected int) int64 {
+		t.Helper()
+		body, err := json.Marshal(payload)
+		require.NoError(t, err)
+		req, _ := http.NewRequest(http.MethodPost, webClientPeoplePath+"/action", bytes.NewReader(body))
+		req.RemoteAddr = defaultRemoteAddr
+		req.Header.Set("X-CSRF-TOKEN", csrf1)
+		setJWTCookieForReq(req, token1)
+		rr := executeRequest(req)
+		checkResponseCode(t, expected, rr)
+		var resp struct {
+			PersonID int64 `json:"person_id"`
+		}
+		json.Unmarshal(rr.Body.Bytes(), &resp) //nolint:errcheck
+		return resp.PersonID
+	}
+
+	// The page and the menu entry.
+	page := string(get(token1, webClientPeoplePath, http.StatusOK))
+	assert.Contains(t, page, `id="people_list_view"`)
+	assert.Contains(t, string(get(token1, webClientFilesPath, http.StatusOK)), `href="`+webClientPeoplePath+`"`)
+
+	// User 1 sees red (2 photos) and blue, not green (only in the unlistable dir).
+	people := list(token1)
+	require.Len(t, people, 2)
+	var redID, blueID int64
+	for _, p := range people {
+		switch p.Photos {
+		case 2:
+			redID = p.ID
+		case 1:
+			blueID = p.ID
+		}
+	}
+	require.NotZero(t, redID)
+	require.NotZero(t, blueID)
+	// User 2 sees red (its own photo, same person) and green.
+	people2 := list(token2)
+	require.Len(t, people2, 2)
+	var greenID int64
+	for _, p := range people2 {
+		assert.Equal(t, 1, p.Faces)
+		if p.ID != redID {
+			greenID = p.ID
+		}
+	}
+	require.NotZero(t, greenID)
+
+	// Faces and face thumbnails follow the photo permissions.
+	var faces struct {
+		Faces []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"faces"`
+	}
+	require.NoError(t, json.Unmarshal(get(token1, webClientPeoplePath+"/faces?id="+strconv.FormatInt(redID, 10), http.StatusOK), &faces))
+	require.Len(t, faces.Faces, 2)
+	crop := get(token1, webClientPeoplePath+"/face?id="+strconv.FormatInt(faces.Faces[0].ID, 10), http.StatusOK)
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(crop))
+	require.NoError(t, err)
+	assert.Equal(t, 160, cfg.Width)
+	get(token2, webClientPeoplePath+"/face?id="+strconv.FormatInt(faces.Faces[0].ID, 10), http.StatusNotFound)
+	get(token1, webClientPeoplePath+"/faces?id="+strconv.FormatInt(greenID, 10), http.StatusNotFound)
+
+	// Naming, searching, merging by name.
+	assert.Equal(t, redID, action(map[string]any{"action": "rename", "person_id": redID, "name": "Grandma Rose"}, http.StatusOK))
+	action(map[string]any{"action": "rename", "person_id": blueID, "name": " "}, http.StatusBadRequest)
+	action(map[string]any{"action": "rename", "person_id": greenID, "name": "Hacker"}, http.StatusNotFound) // not visible
+	action(map[string]any{"action": "explode", "person_id": redID}, http.StatusBadRequest)
+
+	searchPeople := func(token, q string) []string {
+		t.Helper()
+		var res []map[string]any
+		require.NoError(t, json.Unmarshal(get(token, webClientSearchPath+"?path=%2F&q="+url.QueryEscape(q), http.StatusOK), &res))
+		var names []string
+		for _, r := range res {
+			names = append(names, r["name"].(string))
+		}
+		return names
+	}
+	assert.ElementsMatch(t, []string{"a.jpg", "b.jpg"}, searchPeople(token1, "person:rose"))
+	assert.ElementsMatch(t, []string{"d.jpg"}, searchPeople(token2, `person:"grandma rose"`), "names are shared")
+	assert.ElementsMatch(t, []string{"a.jpg"}, searchPeople(token1, "person:#"+strconv.FormatInt(blueID, 10)))
+
+	assert.Equal(t, redID, action(map[string]any{"action": "rename", "person_id": blueID, "name": "grandma rose"}, http.StatusOK))
+	people = list(token1)
+	require.Len(t, people, 1)
+	assert.Equal(t, 3, people[0].Faces)
+
+	// Moving a face out, then to a new person.
+	require.NoError(t, json.Unmarshal(get(token1, webClientPeoplePath+"/faces?id="+strconv.FormatInt(redID, 10), http.StatusOK), &faces))
+	require.Len(t, faces.Faces, 3)
+	moved := faces.Faces[2].ID
+	bobID := action(map[string]any{"action": "move_faces", "face_ids": []int64{moved}, "name": "Bob"}, http.StatusOK)
+	assert.NotZero(t, bobID)
+	assert.Len(t, searchPeople(token1, "person:bob"), 1)
+	action(map[string]any{"action": "move_faces", "face_ids": []int64{}, "name": "Bob"}, http.StatusBadRequest)
+
+	// Hiding.
+	action(map[string]any{"action": "hide", "person_id": bobID}, http.StatusOK)
+	assert.Empty(t, searchPeople(token1, "person:bob"))
+	for _, p := range list(token1) {
+		if p.ID == bobID {
+			assert.True(t, p.Hidden)
+		}
+	}
+	action(map[string]any{"action": "unhide", "person_id": bobID}, http.StatusOK)
+	assert.Len(t, searchPeople(token1, "person:bob"), 1)
+
+	// Without CSRF token actions are refused.
+	req, _ := http.NewRequest(http.MethodPost, webClientPeoplePath+"/action", bytes.NewReader([]byte(`{"action":"hide","person_id":1}`)))
+	setJWTCookieForReq(req, token1)
+	rr := executeRequest(req)
+	checkResponseCode(t, http.StatusForbidden, rr)
+
+	// Disabled face recognition: no page.
+	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"}, []string{home, home2}, 4)
+	get(token1, webClientPeoplePath, http.StatusNotFound)
+	assert.NotContains(t, string(get(token1, webClientFilesPath, http.StatusOK)), `href="`+webClientPeoplePath+`"`)
 }

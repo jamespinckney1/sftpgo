@@ -1,6 +1,6 @@
 # WebClient enhancements (fork)
 
-This fork adds five **additive, backward-compatible** features to the end-user
+This fork adds six **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
 crypto, or the virtual-filesystem sandbox is changed; the features live in the
 web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
@@ -246,6 +246,103 @@ How it works:
 Actions on search results (delete, rename, move/copy, download, share) now act
 on the file where it actually is. Previously they assumed every result was in
 the current folder.
+
+## 6. People: face recognition
+
+With face recognition enabled, the photo index finds the faces in every photo
+and groups them by person. A **People** page in the WebClient menu lets anyone
+in the family put names on the groups, and the search box finds photos by
+person.
+
+### Using it
+
+- **People page**: named people first, then the unnamed groups ("Who is
+  this?"), the largest first. Open a group to:
+  - **name it**: names are shared by everybody. Giving a group the name of an
+    existing person merges the two (after a confirmation);
+  - **View photos**: opens the file list searching `person:#<id>`;
+  - fix mistakes: select faces and use **Not this person**, or type the right
+    name and **Move** them (a new name creates the person). Faces moved by hand
+    are never moved again automatically;
+  - **Hide** a group (strangers in the background): its future look-alikes
+    keep going to it, out of the way. "Show hidden" brings it back.
+- **Search**:
+
+| Query | Finds |
+| --- | --- |
+| `person:rose` | photos of the people whose name contains "rose" |
+| `person:"Grandma Rose"` | names with spaces |
+| `person:rose person:bob` | photos showing both |
+| `person:rose taken:2019..2021` | combined with any other filter |
+
+New photos are processed automatically: a face matching a named person goes to
+that person, others to the unnamed groups.
+
+### Privacy
+
+Names are shared, but every user only sees the people, faces, face thumbnails
+and photos in the files they can access, with the same rules as a directory
+listing. A person appears for a user only if at least one of their photos is
+visible to that user. Face data never leaves the server: the models run
+locally in the machine-learning container.
+
+### How it works
+
+- The faces are found by the machine-learning container of the
+  [Immich](https://immich.app) project, a separate container that SFTPGo calls
+  over HTTP. It runs on the CPU (arm64 images available) and downloads its
+  models (about 300 MB for `buffalo_l`) from Hugging Face on first use.
+- Each photo's preview is sent once, after the photo is indexed and while the
+  indexer is otherwise idle, so the HDD is not read again. The face boxes and
+  their 512-number descriptors are stored in the index on the SSD (about 2 KB
+  per face).
+- Each face joins the person whose faces it is most similar to (cosine
+  similarity of the descriptors to the person's average) if the similarity
+  reaches `face_match_threshold`, otherwise it starts a new unnamed group.
+  Faces smaller than 36 pixels in the preview or detected with low confidence
+  are ignored.
+- If the container is down, faces are retried later; nothing is lost.
+- Licensing: the Immich machine-learning code is AGPL-3.0 like this fork; the
+  InsightFace face models (`buffalo_l`, `buffalo_s`) are licensed for
+  non-commercial use only.
+
+### Setup (Docker Compose)
+
+Add the machine-learning container next to SFTPGo, with its model cache on the
+SSD:
+
+```yaml
+  immich-ml:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich-ml
+    restart: unless-stopped
+    volumes:
+      - /mnt/ssd/immich-ml-cache:/cache
+    environment:
+      - MACHINE_LEARNING_MODEL_TTL=600   # unload the models after 10 idle minutes
+```
+
+and point SFTPGo at it:
+
+```yaml
+      - SFTPGO_HTTPD__PHOTO_INDEX__ML_URL=http://immich-ml:3003
+```
+
+Check the setup with one photo before restarting SFTPGo (the first run
+downloads the models):
+
+```sh
+docker exec sftpgo sftpgo photoindex-facecheck --file /srv/fileshare/some/photo.jpg
+```
+
+### Configuration (`httpd.photo_index`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ml_url` | `""` | URL of the machine-learning container. Empty disables face recognition. |
+| `face_model` | `"buffalo_l"` | Face model: `buffalo_l` (most accurate) or `buffalo_s` (faster, lighter). |
+| `face_min_score` | `0.7` | Minimum detection confidence (0-1). |
+| `face_match_threshold` | `0.5` | Minimum similarity (0-1) to add a face to a person automatically. Raise it if different people get mixed up, lower it if the same person is split into many groups. |
 
 ## License & attribution
 

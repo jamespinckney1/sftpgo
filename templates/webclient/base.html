@@ -77,6 +77,22 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         <span data-i18n="title.files" class="menu-title">Files</span>
     </a>
 </div>
+{{- if .PeopleURL}}
+<div class="menu-item">
+    <a class="menu-link {{- if eq .CurrentURL .PeopleURL}} active{{- end}}" href="{{.PeopleURL}}">
+        <span class="menu-icon">
+            <i class="ki-duotone ki-people fs-1">
+                <span class="path1"></span>
+                <span class="path2"></span>
+                <span class="path3"></span>
+                <span class="path4"></span>
+                <span class="path5"></span>
+            </i>
+        </span>
+        <span data-i18n="title.people" class="menu-title">People</span>
+    </a>
+</div>
+{{- end}}
 {{- if .LoggedUser.CanManageShares}}
 <div class="menu-item">
     <a class="menu-link {{- if eq .CurrentURL .SharesURL}} active{{- end}}" href="{{.SharesURL}}">
