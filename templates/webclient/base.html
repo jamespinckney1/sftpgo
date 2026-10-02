@@ -93,6 +93,19 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
     </a>
 </div>
 {{- end}}
+{{- if .PlacesURL}}
+<div class="menu-item">
+    <a class="menu-link {{- if eq .CurrentURL .PlacesURL}} active{{- end}}" href="{{.PlacesURL}}">
+        <span class="menu-icon">
+            <i class="ki-duotone ki-geolocation fs-1">
+                <span class="path1"></span>
+                <span class="path2"></span>
+            </i>
+        </span>
+        <span data-i18n="title.places" class="menu-title">Places</span>
+    </a>
+</div>
+{{- end}}
 {{- if .LoggedUser.CanManageShares}}
 <div class="menu-item">
     <a class="menu-link {{- if eq .CurrentURL .SharesURL}} active{{- end}}" href="{{.SharesURL}}">

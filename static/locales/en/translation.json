@@ -8,6 +8,7 @@
         "files": "Files",
         "shares": "Shares",
         "people": "People",
+        "places": "Places",
         "add_share": "Add share",
         "update_share": "Update share",
         "two_factor_auth": "Two-factor authentication",
@@ -284,12 +285,13 @@
             "location": "Location",
             "taken": "Taken",
             "taken_unknown": "No date in the photo metadata or file name: the file modification date is shown",
-            "photo_help": "Search: a name (* and ? wildcards), photos by date taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; people person:rose (person:\"Grandma Rose\", repeat for several people); duplicates is:duplicate or is:similar; size larger:100MB, smaller:1MB, sort:size. Combine them, e.g. \"person:rose taken:2019\"",
+            "photo_help": "Search: a name (* and ? wildcards); taken:2023, taken:2023-06..2023-08, taken:unknown; person:rose (person:\"Grandma Rose\"); place:charleston (place:\"New York\"); show:dog (show:\"dog on the beach\", best matches first); is:duplicate, is:similar; larger:100MB, smaller:1MB, sort:size. Combine them, e.g. \"person:rose place:charleston taken:2019\"",
             "photo_indexing": "Indexing photos: {{total}} indexed.",
             "photo_indexing_progress": "Current pass: {{done}} of {{queued}}.",
             "photo_query_invalid": "Invalid photo search. Use for example taken:2023, taken:2023-06 or taken:2023-06..2023-08",
             "photo_index_disabled": "Photo search is not enabled on this server",
-            "photo_faces": "Finding faces: {{count}} photos left.",
+            "photo_faces": "Analyzing photos (faces, contents): {{count}} left.",
+            "show_unavailable": "The \"show:\" search is not available: the photo analysis service is not configured or not reachable",
             "size_help": "Search: a name (* and ? wildcards); size larger:100MB, smaller:1MB, sort:size (largest first). Combine them, e.g. \"*.mov larger:1GB\"",
             "duplicates": "Duplicates",
             "dup_select": "Select extra copies",
@@ -1191,5 +1193,13 @@
         "saved": "Saved",
         "merge_confirm": "\"{{name}}\" already exists. Merge these faces into {{name}}?",
         "merge": "Merge"
+    },
+    "places": {
+        "filter": "Filter places",
+        "no_names": "Place names are not available on this server: photos are shown on the map only.",
+        "open_folder": "Open folder",
+        "photo_count": "Photos: {{count}}",
+        "summary": "Photos with a location: {{photos}} · places: {{places}}",
+        "empty": "No photos with a location yet: photos taken with GPS (most phones) appear here once indexed."
     }
 }

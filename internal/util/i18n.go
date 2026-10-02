@@ -27,6 +27,7 @@ const (
 	I18nFilesTitle                     = "title.files"
 	I18nSharesTitle                    = "title.shares"
 	I18nPeopleTitle                    = "title.people"
+	I18nPlacesTitle                    = "title.places"
 	I18nShareAddTitle                  = "title.add_share"
 	I18nShareUpdateTitle               = "title.update_share"
 	I18nProfileTitle                   = "title.profile"

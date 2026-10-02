@@ -1658,6 +1658,10 @@ func (s *httpdServer) setupWebClientRoutes() {
 				Get(webClientPeoplePath+"/face", s.handleClientFaceCrop)
 			router.With(s.checkAuthRequirements, s.verifyCSRFHeader).
 				Post(webClientPeoplePath+"/action", s.handleClientPeopleAction)
+			router.With(s.checkAuthRequirements, s.refreshCookie).
+				Get(webClientPlacesPath, s.handleClientPlacesPage)
+			router.With(s.checkAuthRequirements, compressor.Handler).
+				Get(webClientPlacesPath+"/points", s.handleClientPlacesPoints)
 			router.With(s.checkAuthRequirements, s.checkHTTPUserPerm(sdk.WebClientWriteDisabled), s.verifyCSRFHeader).
 				Post(webClientDirsPath, createUserDir)
 			router.With(s.checkAuthRequirements, s.checkHTTPUserPerm(sdk.WebClientWriteDisabled), s.verifyCSRFHeader).

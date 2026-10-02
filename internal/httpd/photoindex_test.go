@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 const (
 	webClientPhotoStatusPath = "/web/client/photoindex/status"
 	webClientPeoplePath      = "/web/client/people"
+	webClientPlacesPath      = "/web/client/places"
 )
 
 func testJPEG(t *testing.T) []byte {
@@ -548,4 +550,149 @@ func TestWebClientPeople(t *testing.T) {
 	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"}, []string{home, home2}, 4)
 	get(token1, webClientPeoplePath, http.StatusNotFound)
 	assert.NotContains(t, string(get(token1, webClientFilesPath, http.StatusOK)), `href="`+webClientPeoplePath+`"`)
+}
+
+func colorJPEG(t *testing.T, colors ...color.RGBA) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 400, 300))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.RGBA{128, 128, 128, 255}}, image.Point{}, draw.Src)
+	for i, c := range colors {
+		draw.Draw(img, image.Rect(20+i*120, 80, 120+i*120, 180), &image.Uniform{c}, image.Point{}, draw.Src)
+	}
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}))
+	return buf.Bytes()
+}
+
+func TestWebClientShowAndPlaces(t *testing.T) {
+	ml := mltest.NewServer()
+	defer ml.Close()
+	u := getTestUser()
+	u.Permissions["/private"] = []string{dataprovider.PermUpload}
+	user, _, err := httpdtest.AddUser(u, http.StatusCreated)
+	require.NoError(t, err)
+	defer func() {
+		photoindex.Initialize(photoindex.Config{}, "", nil) //nolint:errcheck
+		_, err = httpdtest.RemoveUser(user, http.StatusOK)
+		assert.NoError(t, err)
+		assert.NoError(t, os.RemoveAll(user.GetHomeDir()))
+	}()
+	home := user.GetHomeDir()
+	red, blue := mltest.Concepts["red"], mltest.Concepts["blue"]
+	write := func(rel string, data []byte) {
+		p := filepath.Join(home, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), os.ModePerm))
+		require.NoError(t, os.WriteFile(p, data, os.ModePerm))
+	}
+	write("red.jpg", colorJPEG(t, red))
+	write("trip/red-blue.jpg", colorJPEG(t, red, blue))
+	write("blue.jpg", colorJPEG(t, blue))
+	write("private/red.jpg", colorJPEG(t, red))
+
+	// GPS positions, if exiftool is available to write them.
+	exiftool, _ := exec.LookPath("exiftool")
+	if exiftool != "" {
+		for p, pos := range map[string][2]string{
+			filepath.Join(home, "red.jpg"):              {"33.70", "-78.87"}, // Myrtle Beach
+			filepath.Join(home, "trip", "red-blue.jpg"): {"40.75", "-73.99"}, // New York
+			filepath.Join(home, "private", "red.jpg"):   {"33.70", "-78.87"},
+		} {
+			lonRef := "E"
+			if strings.HasPrefix(pos[1], "-") {
+				lonRef = "W"
+			}
+			out, err := exec.Command(exiftool, "-q", "-overwrite_original", "-GPSLatitude="+pos[0], "-GPSLatitudeRef=N",
+				"-GPSLongitude="+strings.TrimPrefix(pos[1], "-"), "-GPSLongitudeRef="+lonRef, p).CombinedOutput()
+			require.NoError(t, err, string(out))
+		}
+	}
+	geoDir := filepath.Join(t.TempDir(), "geonames")
+	require.NoError(t, os.MkdirAll(geoDir, os.ModePerm))
+	require.NoError(t, os.WriteFile(filepath.Join(geoDir, "admin1CodesASCII.txt"),
+		[]byte("US.SC\tSouth Carolina\tSouth Carolina\t1\nUS.NY\tNew York\tNew York\t2\n"), os.ModePerm))
+	require.NoError(t, os.WriteFile(filepath.Join(geoDir, "countryInfo.txt"),
+		[]byte("#ISO\tISO3\nUS\tUSA\t840\tUS\tUnited States\tWashington\n"), os.ModePerm))
+	require.NoError(t, os.WriteFile(filepath.Join(geoDir, "cities500.txt"), []byte(
+		"1\tMyrtle Beach\tMyrtle Beach\t\t33.68906\t-78.88669\tP\tPPL\tUS\t\tSC\t\t\t\t1\t\t9\tAmerica/New_York\t2011-05-14\n"+
+			"2\tNew York City\tNew York City\t\t40.71427\t-74.00597\tP\tPPL\tUS\t\tNY\t\t\t\t1\t\t9\tAmerica/New_York\t2011-05-14\n"),
+		os.ModePerm))
+
+	cfg := photoindex.Config{ExiftoolPath: exiftool, VipsPath: "/nonexistent", GeonamesDir: geoDir,
+		MLURL: ml.URL, ClipModel: "ViT-B-32__openai", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}
+	if exiftool == "" {
+		cfg.ExiftoolPath = "/nonexistent"
+	}
+	startTestPhotoIndex(t, cfg, []string{home}, 4)
+	require.Eventually(t, func() bool {
+		return photoindex.Get().Status().Faces.Pending == 0
+	}, 30*time.Second, 100*time.Millisecond)
+	assert.False(t, photoindex.Get().FacesEnabled(), "no face model configured")
+
+	token, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
+	require.NoError(t, err)
+	get := func(reqURL string, expected int) []byte {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, reqURL, nil)
+		setJWTCookieForReq(req, token)
+		rr := executeRequest(req)
+		checkResponseCode(t, expected, rr)
+		return rr.Body.Bytes()
+	}
+	search := func(q string, expected int) []map[string]any {
+		t.Helper()
+		var res []map[string]any
+		require.NoError(t, json.Unmarshal(get(webClientSearchPath+"?path=%2F&q="+url.QueryEscape(q), expected), &res))
+		return res
+	}
+	names := func(res []map[string]any) []string {
+		var out []string
+		for _, r := range res {
+			out = append(out, r["name"].(string))
+		}
+		return out
+	}
+
+	// Things pictured: best matches first, only visible files.
+	res := search("show:red", http.StatusOK)
+	assert.Equal(t, []string{"red.jpg", "red-blue.jpg"}, names(res))
+	assert.Equal(t, "2_trip/red-blue.jpg", res[1]["meta"])
+	res = search("show:red red-", http.StatusOK)
+	assert.Equal(t, []string{"red-blue.jpg"}, names(res))
+	ml.Down.Store(true)
+	var errResp map[string]any
+	require.NoError(t, json.Unmarshal(get(webClientSearchPath+"?path=%2F&q="+url.QueryEscape("show:green"),
+		http.StatusBadRequest), &errResp))
+	assert.Equal(t, "fs.search.show_unavailable", errResp["message"])
+	ml.Down.Store(false)
+
+	// Places.
+	page := string(get(webClientFilesPath, http.StatusOK))
+	assert.Contains(t, page, `href="/web/client/places"`)
+	assert.NotContains(t, page, `href="/web/client/people"`, "faces disabled")
+	assert.Contains(t, string(get(webClientPlacesPath, http.StatusOK)), `id="places_map"`)
+	var pts struct {
+		Points [][3]float64 `json:"points"`
+		Files  []string     `json:"files"`
+		Places []struct {
+			City    string `json:"city"`
+			State   string `json:"state"`
+			Country string `json:"country"`
+			Photos  int    `json:"photos"`
+		} `json:"places"`
+	}
+	require.NoError(t, json.Unmarshal(get(webClientPlacesPath+"/points", http.StatusOK), &pts))
+	if exiftool == "" {
+		assert.Empty(t, pts.Points)
+		return
+	}
+	require.Len(t, pts.Points, 2, "the photo in the unlistable dir is not shown")
+	assert.ElementsMatch(t, []string{"/red.jpg", "/trip/red-blue.jpg"}, pts.Files)
+	require.Len(t, pts.Places, 2)
+	assert.ElementsMatch(t, []string{"Myrtle Beach", "New York City"}, []string{pts.Places[0].City, pts.Places[1].City})
+
+	res = search("place:myrtle", http.StatusOK)
+	assert.Equal(t, []string{"red.jpg"}, names(res))
+	assert.Equal(t, "Myrtle Beach, South Carolina, United States", res[0]["place"])
+	assert.Equal(t, []string{"red-blue.jpg"}, names(search(`place:"new york" show:red`, http.StatusOK)))
+	assert.Empty(t, search("place:paris", http.StatusOK))
 }

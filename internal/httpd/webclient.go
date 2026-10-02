@@ -58,6 +58,7 @@ const (
 	templateClientShare    = "share.html"
 	templateClientShares   = "shares.html"
 	templateClientPeople   = "people.html"
+	templateClientPlaces   = "places.html"
 	templateClientViewPDF  = "viewpdf.html"
 	templateShareLogin     = "sharelogin.html"
 	templateShareDownload  = "sharedownload.html"
@@ -108,6 +109,7 @@ type baseClientPage struct {
 	EditURL         string
 	MFAURL          string
 	PeopleURL       string // set when face recognition is enabled (fork feature)
+	PlacesURL       string // set when the photo index is enabled (fork feature)
 	CSRFToken       string
 	LoggedUser      *dataprovider.User
 	IsLoggedToShare bool
@@ -450,6 +452,11 @@ func loadClientTemplates(templatesPath string) {
 		filepath.Join(templatesPath, templateClientDir, templateClientBase),
 		filepath.Join(templatesPath, templateClientDir, templateClientPeople),
 	}
+	placesPaths := []string{
+		filepath.Join(templatesPath, templateCommonDir, templateCommonBase),
+		filepath.Join(templatesPath, templateClientDir, templateClientBase),
+		filepath.Join(templatesPath, templateClientDir, templateClientPlaces),
+	}
 	sharePaths := []string{
 		filepath.Join(templatesPath, templateCommonDir, templateCommonBase),
 		filepath.Join(templatesPath, templateClientDir, templateClientBase),
@@ -532,6 +539,7 @@ func loadClientTemplates(templatesPath string) {
 	shareLoginTmpl := util.LoadTemplate(nil, shareLoginPath...)
 	sharesTmpl := util.LoadTemplate(nil, sharesPaths...)
 	peopleTmpl := util.LoadTemplate(nil, peoplePaths...)
+	placesTmpl := util.LoadTemplate(nil, placesPaths...)
 	shareTmpl := util.LoadTemplate(nil, sharePaths...)
 	forgotPwdTmpl := util.LoadTemplate(nil, forgotPwdPaths...)
 	resetPwdTmpl := util.LoadTemplate(nil, resetPwdPaths...)
@@ -550,6 +558,7 @@ func loadClientTemplates(templatesPath string) {
 	clientTemplates[templateClientEditFile] = editFileTmpl
 	clientTemplates[templateClientShares] = sharesTmpl
 	clientTemplates[templateClientPeople] = peopleTmpl
+	clientTemplates[templateClientPlaces] = placesTmpl
 	clientTemplates[templateClientShare] = shareTmpl
 	clientTemplates[templateForgotPassword] = forgotPwdTmpl
 	clientTemplates[templateResetPassword] = resetPwdTmpl
@@ -579,6 +588,7 @@ func (s *httpdServer) getBaseClientPageData(title, currentURL string, w http.Res
 		EditURL:         webClientEditFilePath,
 		MFAURL:          webClientMFAPath,
 		PeopleURL:       peopleURLForUser(),
+		PlacesURL:       placesURLForUser(),
 		CSRFToken:       csrfToken,
 		LoggedUser:      getUserFromToken(r),
 		IsLoggedToShare: false,

@@ -8,6 +8,7 @@
         "files": "File",
         "shares": "Condivisioni",
         "people": "Persone",
+        "places": "Luoghi",
         "add_share": "Aggiungi condivisione",
         "update_share": "Modifica condivisione",
         "two_factor_auth": "Autenticazione a due fattori",
@@ -284,12 +285,13 @@
             "location": "Posizione",
             "taken": "Scattata",
             "taken_unknown": "Nessuna data nei metadati o nel nome del file: viene mostrata la data di modifica",
-            "photo_help": "Ricerca: un nome (caratteri jolly * e ?), foto per data taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; persone person:rose (person:\"Nonna Rosa\", ripeti per più persone); duplicati is:duplicate o is:similar; dimensione larger:100MB, smaller:1MB, sort:size. Combinabili, es. \"person:rose taken:2019\"",
+            "photo_help": "Ricerca: un nome (caratteri jolly * e ?); taken:2023, taken:2023-06..2023-08, taken:unknown; person:rose (person:\"Nonna Rosa\"); place:genova (place:\"New York\"); show:cane (show:\"cane sulla spiaggia\", migliori corrispondenze prima); is:duplicate, is:similar; larger:100MB, smaller:1MB, sort:size. Combinabili, es. \"person:rose place:genova taken:2019\"",
             "photo_indexing": "Indicizzazione foto: {{total}} indicizzate.",
             "photo_indexing_progress": "Passaggio corrente: {{done}} di {{queued}}.",
             "photo_query_invalid": "Ricerca foto non valida. Usa ad esempio taken:2023, taken:2023-06 o taken:2023-06..2023-08",
             "photo_index_disabled": "La ricerca foto non è abilitata su questo server",
-            "photo_faces": "Ricerca volti: {{count}} foto rimanenti.",
+            "photo_faces": "Analisi delle foto (volti, contenuti): {{count}} rimanenti.",
+            "show_unavailable": "La ricerca \"show:\" non è disponibile: il servizio di analisi delle foto non è configurato o non è raggiungibile",
             "size_help": "Ricerca: un nome (caratteri jolly * e ?); dimensione larger:100MB, smaller:1MB, sort:size (i più grandi prima). Combinabili, es. \"*.mov larger:1GB\"",
             "duplicates": "Duplicati",
             "dup_select": "Seleziona le copie in più",
@@ -1191,5 +1193,13 @@
         "saved": "Salvato",
         "merge_confirm": "\"{{name}}\" esiste già. Unire questi volti a {{name}}?",
         "merge": "Unisci"
+    },
+    "places": {
+        "filter": "Filtra luoghi",
+        "no_names": "I nomi dei luoghi non sono disponibili su questo server: le foto sono mostrate solo sulla mappa.",
+        "open_folder": "Apri cartella",
+        "photo_count": "Foto: {{count}}",
+        "summary": "Foto con posizione: {{photos}} · luoghi: {{places}}",
+        "empty": "Ancora nessuna foto con posizione: le foto scattate con il GPS (la maggior parte dei telefoni) appaiono qui una volta indicizzate."
     }
 }

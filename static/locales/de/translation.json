@@ -8,6 +8,7 @@
         "files": "Dateien",
         "shares": "Freigaben",
         "people": "Personen",
+        "places": "Orte",
         "add_share": "Freigabe hinzufügen",
         "update_share": "Freigabe aktualisieren",
         "two_factor_auth": "Zwei-Faktor-Authentifizierung",
@@ -284,12 +285,13 @@
             "location": "Speicherort",
             "taken": "Aufgenommen",
             "taken_unknown": "Kein Datum in den Metadaten oder im Dateinamen: das Änderungsdatum wird angezeigt",
-            "photo_help": "Suche: ein Name (Platzhalter * und ?), Fotos nach Aufnahmedatum taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; Personen person:rose (person:\"Oma Rosa\", für mehrere Personen wiederholen); Duplikate is:duplicate oder is:similar; Größe larger:100MB, smaller:1MB, sort:size. Kombinierbar, z. B. \"person:rose taken:2019\"",
+            "photo_help": "Suche: ein Name (Platzhalter * und ?); taken:2023, taken:2023-06..2023-08, taken:unknown; person:rose (person:\"Oma Rosa\"); place:berlin (place:\"New York\"); show:hund (show:\"hund am strand\", beste Treffer zuerst); is:duplicate, is:similar; larger:100MB, smaller:1MB, sort:size. Kombinierbar, z. B. \"person:rose place:berlin taken:2019\"",
             "photo_indexing": "Fotos werden indiziert: {{total}} indiziert.",
             "photo_indexing_progress": "Aktueller Durchlauf: {{done}} von {{queued}}.",
             "photo_query_invalid": "Ungültige Fotosuche. Verwenden Sie z. B. taken:2023, taken:2023-06 oder taken:2023-06..2023-08",
             "photo_index_disabled": "Die Fotosuche ist auf diesem Server nicht aktiviert",
-            "photo_faces": "Gesichtssuche: noch {{count}} Fotos.",
+            "photo_faces": "Fotos werden analysiert (Gesichter, Inhalte): noch {{count}}.",
+            "show_unavailable": "Die Suche \"show:\" ist nicht verfügbar: der Fotoanalysedienst ist nicht konfiguriert oder nicht erreichbar",
             "size_help": "Suche: ein Name (Platzhalter * und ?); Größe larger:100MB, smaller:1MB, sort:size (größte zuerst). Kombinierbar, z. B. \"*.mov larger:1GB\"",
             "duplicates": "Duplikate",
             "dup_select": "Überzählige Kopien auswählen",
@@ -1191,5 +1193,13 @@
         "saved": "Gespeichert",
         "merge_confirm": "\"{{name}}\" existiert bereits. Diese Gesichter mit {{name}} zusammenführen?",
         "merge": "Zusammenführen"
+    },
+    "places": {
+        "filter": "Orte filtern",
+        "no_names": "Ortsnamen sind auf diesem Server nicht verfügbar: Fotos werden nur auf der Karte angezeigt.",
+        "open_folder": "Ordner öffnen",
+        "photo_count": "Fotos: {{count}}",
+        "summary": "Fotos mit Standort: {{photos}} · Orte: {{places}}",
+        "empty": "Noch keine Fotos mit Standort: mit GPS aufgenommene Fotos (die meisten Handys) erscheinen hier nach der Indizierung."
     }
 }

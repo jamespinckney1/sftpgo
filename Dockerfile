@@ -12,6 +12,19 @@ ARG GOPROXY
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
+# Fork: download the GeoNames gazetteer used to name the places where photos
+# were taken (see FORK_FEATURES.md, Places). Data by GeoNames, CC BY 4.0.
+# Set to "false" to skip it: photos are still shown on the map, without names.
+# A failed download only prints a warning.
+ARG INSTALL_GEONAMES=true
+
+RUN mkdir -p /workspace/geonames && if [ "${INSTALL_GEONAMES}" = "true" ]; then \
+      cd /workspace/geonames && \
+      for f in cities500.zip admin1CodesASCII.txt countryInfo.txt; do \
+        curl -fsSL --retry 3 -o "$f" "https://download.geonames.org/export/dump/$f" || { echo "WARNING: unable to download $f, places will have no names"; rm -f /workspace/geonames/*; break; }; \
+      done; \
+    fi
+
 ARG COMMIT_SHA
 
 # This ARG allows to disable some optional features and it might be useful if you build the image yourself.
@@ -64,6 +77,7 @@ COPY --from=builder /workspace/sftpgo.json /etc/sftpgo/sftpgo.json
 COPY --from=builder /workspace/templates /usr/share/sftpgo/templates
 COPY --from=builder /workspace/static /usr/share/sftpgo/static
 COPY --from=builder /workspace/openapi /usr/share/sftpgo/openapi
+COPY --from=builder /workspace/geonames /usr/share/sftpgo/geonames
 COPY --from=builder /workspace/sftpgo /usr/local/bin/sftpgo-plugin-* /usr/local/bin/
 
 # Log to the stdout so the logs will be available using docker logs

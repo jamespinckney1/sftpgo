@@ -38,6 +38,9 @@ const (
 	mlTaskFaces       = "facial-recognition"
 	mlTypeDetection   = "detection"
 	mlTypeRecognition = "recognition"
+	mlTaskClip        = "clip"
+	mlTypeVisual      = "visual"
+	mlTypeTextual     = "textual"
 	// mlTimeout is generous: the first request downloads the models.
 	mlTimeout = 10 * time.Minute
 )
@@ -45,7 +48,7 @@ const (
 // errMLUnavailable wraps failures to reach the service, as opposed to errors
 // about a specific image: the work is retried later instead of being marked
 // as failed.
-var errMLUnavailable = errors.New("face recognition service unavailable")
+var errMLUnavailable = errors.New("machine-learning service unavailable")
 
 // MLFace is a face found in an image.
 type MLFace struct {
@@ -56,25 +59,29 @@ type MLFace struct {
 	Embedding []float32
 }
 
-// MLResult is the result of a face detection request.
+// MLResult is the result of an image analysis.
 type MLResult struct {
 	Width, Height int
 	Faces         []MLFace
+	// Clip is the CLIP image embedding, normalized, if requested.
+	Clip []float32
 }
 
 type mlClient struct {
-	url      string
-	model    string
-	minScore float64
-	client   *http.Client
+	url       string
+	faceModel string // empty disables face recognition
+	clipModel string // empty disables "things pictured"
+	minScore  float64
+	client    *http.Client
 }
 
-func newMLClient(url, model string, minScore float64) *mlClient {
+func newMLClient(url, faceModel, clipModel string, minScore float64) *mlClient {
 	return &mlClient{
-		url:      strings.TrimSuffix(url, "/"),
-		model:    model,
-		minScore: minScore,
-		client:   &http.Client{Timeout: mlTimeout},
+		url:       strings.TrimSuffix(url, "/"),
+		faceModel: faceModel,
+		clipModel: clipModel,
+		minScore:  minScore,
+		client:    &http.Client{Timeout: mlTimeout},
 	}
 }
 
@@ -97,56 +104,99 @@ func (c *mlClient) ping(ctx context.Context) error {
 
 // detectFaces sends a JPEG to the service and returns the faces found.
 func (c *mlClient) detectFaces(ctx context.Context, jpeg []byte) (MLResult, error) {
-	entries := map[string]any{
-		mlTaskFaces: map[string]any{
+	return c.analyze(ctx, jpeg, true, false)
+}
+
+// analyze sends a JPEG to the service, asking in a single request for the
+// faces and/or the CLIP embedding.
+func (c *mlClient) analyze(ctx context.Context, jpeg []byte, faces, clip bool) (MLResult, error) {
+	entries := map[string]any{}
+	if faces {
+		entries[mlTaskFaces] = map[string]any{
 			mlTypeDetection: map[string]any{
-				"modelName": c.model,
+				"modelName": c.faceModel,
 				"options":   map[string]any{"minScore": c.minScore},
 			},
-			mlTypeRecognition: map[string]any{"modelName": c.model},
-		},
+			mlTypeRecognition: map[string]any{"modelName": c.faceModel},
+		}
 	}
-	entriesJSON, err := json.Marshal(entries)
+	if clip {
+		entries[mlTaskClip] = map[string]any{
+			mlTypeVisual: map[string]any{"modelName": c.clipModel},
+		}
+	}
+	data, err := c.predict(ctx, entries, jpeg, "")
 	if err != nil {
 		return MLResult{}, err
+	}
+	return parseMLResponse(data, clip)
+}
+
+// encodeText returns the CLIP embedding of a text, to compare with the image
+// embeddings.
+func (c *mlClient) encodeText(ctx context.Context, text string) ([]float32, error) {
+	entries := map[string]any{
+		mlTaskClip: map[string]any{
+			mlTypeTextual: map[string]any{"modelName": c.clipModel},
+		},
+	}
+	data, err := c.predict(ctx, entries, nil, text)
+	if err != nil {
+		return nil, err
+	}
+	var r map[string]json.RawMessage
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("unable to parse the text embedding response: %w", err)
+	}
+	return parseEmbedding(r[mlTaskClip])
+}
+
+// predict calls POST /predict with the given tasks and an image or a text.
+func (c *mlClient) predict(ctx context.Context, entries map[string]any, image []byte, text string) ([]byte, error) {
+	entriesJSON, err := json.Marshal(entries)
+	if err != nil {
+		return nil, err
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	if err := w.WriteField("entries", string(entriesJSON)); err != nil {
-		return MLResult{}, err
+		return nil, err
 	}
-	part, err := w.CreateFormFile("image", "image.jpg")
-	if err != nil {
-		return MLResult{}, err
-	}
-	if _, err := part.Write(jpeg); err != nil {
-		return MLResult{}, err
+	if image != nil {
+		part, err := w.CreateFormFile("image", "image.jpg")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(image); err != nil {
+			return nil, err
+		}
+	} else if err := w.WriteField("text", text); err != nil {
+		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		return MLResult{}, err
+		return nil, err
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/predict", &body)
 	if err != nil {
-		return MLResult{}, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return MLResult{}, fmt.Errorf("%w: %v", errMLUnavailable, err)
+		return nil, fmt.Errorf("%w: %v", errMLUnavailable, err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024))
 	if err != nil {
-		return MLResult{}, fmt.Errorf("%w: %v", errMLUnavailable, err)
+		return nil, fmt.Errorf("%w: %v", errMLUnavailable, err)
 	}
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusNotFound {
-		return MLResult{}, fmt.Errorf("%w: %s: %s", errMLUnavailable, resp.Status, truncate(string(data), 300))
+		return nil, fmt.Errorf("%w: %s: %s", errMLUnavailable, resp.Status, truncate(string(data), 300))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return MLResult{}, fmt.Errorf("face detection failed: %s: %s", resp.Status, truncate(string(data), 300))
+		return nil, fmt.Errorf("analysis failed: %s: %s", resp.Status, truncate(string(data), 300))
 	}
-	return parseMLResponse(data)
+	return data, nil
 }
 
 func truncate(s string, n int) string {
@@ -160,8 +210,9 @@ func truncate(s string, n int) string {
 // containing an array (to be stored as is in pgvector by Immich) or, in some
 // versions, as an array: both are accepted.
 type mlResponse struct {
-	ImageWidth  int `json:"imageWidth"`
-	ImageHeight int `json:"imageHeight"`
+	Clip        json.RawMessage `json:"clip"`
+	ImageWidth  int             `json:"imageWidth"`
+	ImageHeight int             `json:"imageHeight"`
 	Faces       []struct {
 		BoundingBox struct {
 			X1 float64 `json:"x1"`
@@ -174,12 +225,19 @@ type mlResponse struct {
 	} `json:"facial-recognition"`
 }
 
-func parseMLResponse(data []byte) (MLResult, error) {
+func parseMLResponse(data []byte, wantClip bool) (MLResult, error) {
 	var r mlResponse
 	if err := json.Unmarshal(data, &r); err != nil {
-		return MLResult{}, fmt.Errorf("unable to parse the face detection response: %w", err)
+		return MLResult{}, fmt.Errorf("unable to parse the analysis response: %w", err)
 	}
 	res := MLResult{Width: r.ImageWidth, Height: r.ImageHeight}
+	if wantClip {
+		clip, err := parseEmbedding(r.Clip)
+		if err != nil {
+			return MLResult{}, fmt.Errorf("clip: %w", err)
+		}
+		res.Clip = clip
+	}
 	for i, f := range r.Faces {
 		emb, err := parseEmbedding(f.Embedding)
 		if err != nil {

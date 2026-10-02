@@ -1,6 +1,6 @@
 # WebClient enhancements (fork)
 
-This fork adds six **additive, backward-compatible** features to the end-user
+This fork adds eight **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
 crypto, or the virtual-filesystem sandbox is changed; the features live in the
 web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
@@ -329,7 +329,7 @@ and point SFTPGo at it:
 ```
 
 Check the setup with one photo before restarting SFTPGo (the first run
-downloads the models):
+downloads the models; it checks "things pictured", section 8, too):
 
 ```sh
 docker exec sftpgo sftpgo photoindex-facecheck --file /srv/fileshare/some/photo.jpg
@@ -340,9 +340,112 @@ docker exec sftpgo sftpgo photoindex-facecheck --file /srv/fileshare/some/photo.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `ml_url` | `""` | URL of the machine-learning container. Empty disables face recognition. |
-| `face_model` | `"buffalo_l"` | Face model: `buffalo_l` (most accurate) or `buffalo_s` (faster, lighter). |
+| `face_model` | `"buffalo_l"` | Face model: `buffalo_l` (most accurate) or `buffalo_s` (faster, lighter). Choose before the first run: faces found with different models cannot be compared, and changing it later only logs a warning. |
 | `face_min_score` | `0.7` | Minimum detection confidence (0-1). |
 | `face_match_threshold` | `0.5` | Minimum similarity (0-1) to add a face to a person automatically. Raise it if different people get mixed up, lower it if the same person is split into many groups. |
+
+## 7. Places: where photos were taken
+
+Photos with a GPS position (most phone photos) are placed in the nearest town,
+with its state/region and country, without any online service.
+
+### Using it
+
+- **Places page** (WebClient menu): a map with every located photo, grouped
+  into clusters that split as you zoom in. Click a photo for a thumbnail and a
+  link to its folder. Next to the map, the list of places with their photo
+  count: click a place to zoom there, or its count to list its photos.
+- **Search**:
+
+| Query | Finds |
+| --- | --- |
+| `place:paris` | photos taken in a town, state/region or country whose name contains "paris" |
+| `place:"South Carolina"` | names with spaces |
+| `place:italy taken:2019` | combined with any other filter |
+
+Search results show the place under the date taken.
+
+### How it works
+
+- Place names come from the [GeoNames](https://www.geonames.org) gazetteer
+  (CC BY 4.0): towns with at least 500 inhabitants (about 200,000 places, ~60
+  MB of memory). A photo is placed in the nearest town within 50 km; others
+  are only on the map.
+- The Docker image downloads the GeoNames files at build time
+  (`--build-arg INSTALL_GEONAMES=false` to skip). Elsewhere, put
+  `cities500.zip` (or `cities1000.zip`), `admin1CodesASCII.txt` and
+  `countryInfo.txt` from <https://download.geonames.org/export/dump/> in
+  `<config dir>/geonames` or set `geonames_dir`. Without them the map still
+  works, without names and without `place:`.
+- Photos indexed before the place names were available are placed at startup
+  in a few seconds; the photos themselves are not read again.
+- The map background (tiles) is loaded by the browser directly from
+  OpenStreetMap: SFTPGo itself does not contact any map service, and only the
+  map area being viewed is requested, never the photo positions. Change
+  `map_tile_url` to use another provider, or a tile server of your own.
+- Every user sees only the photos in the files they can access.
+
+### Configuration (`httpd.photo_index`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `geonames_dir` | `""` | Directory with the GeoNames files. Empty → `<config dir>/geonames`, then `/usr/share/sftpgo/geonames` (Docker image). |
+| `map_tile_url` | `"https://tile.openstreetmap.org/{z}/{x}/{y}.png"` | Map tiles URL template, loaded by the browser. Respect the provider's usage policy. |
+
+## 8. Things pictured: search by description
+
+Find photos by what they show, described in plain words (English works best):
+`show:"dog on the beach"`, `show:snow`, `show:birthday cake`.
+
+### Using it
+
+| Query | Finds |
+| --- | --- |
+| `show:sunset` | the photos that best match "sunset", best match first |
+| `show:"kids playing in the snow"` | a longer description |
+| `show:dog person:rose` | combined with any other filter |
+| `show:beach taken:2019 place:florida` | … including date and place |
+
+Results are ranked by similarity, best first; up to 300 are shown and clearly
+unrelated photos are left out. The search has no fixed list of words: it
+understands objects, scenes, activities, colors, and even some text in the
+photo, but it is a ranking, not an exact filter, so expect a few misses near
+the end of the list.
+
+### How it works
+
+- It uses a CLIP model, run by the same Immich machine-learning container as
+  face recognition (section 6): no extra container. The model (about 600 MB
+  for `ViT-B-32__openai`) is downloaded on first use.
+- Each photo's preview is analyzed once, in the same request as face
+  recognition; a 512-number description of the photo is stored in the index
+  (2 KB per photo). Photos indexed before are analyzed in the background.
+- At search time the words are turned into the same kind of description
+  (one request, cached) and compared with every photo in memory: about 0.5 MB
+  per 1,000 photos, a fraction of a second for tens of thousands of photos on
+  a Raspberry Pi 5.
+- The machine-learning container needs about 1 GB of memory with both models
+  loaded; with `MACHINE_LEARNING_MODEL_TTL` they are unloaded when idle.
+- If the container is down, `show:` searches report it and photos are analyzed
+  later; nothing is lost.
+- Licensing: the OpenAI CLIP models are MIT-licensed.
+
+### Configuration (`httpd.photo_index`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `clip_model` | `"ViT-B-32__openai"` | CLIP model name as known by the Immich machine-learning container. Empty disables "things pictured". Needs `ml_url`. After a change, every photo is analyzed again automatically. |
+
+## Roadmap
+
+Planned, not built yet:
+
+- **Faces in videos**: sample frames from each video (with ffmpeg), find the
+  faces and add the video to the people found.
+- **Things pictured in videos**: the same frame sampling for `show:`, a video
+  ranking by its best-matching frame.
+- **Timeline view**: browse every photo by year and month, newest first, in a
+  scrolling grid with a date scrubber, with the same filters as search.
 
 ## License & attribution
 

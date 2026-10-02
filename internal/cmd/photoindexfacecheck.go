@@ -30,14 +30,16 @@ var (
 	faceCheckFile     string
 	faceCheckModel    string
 	faceCheckMinScore float64
+	faceCheckClip     string
+	faceCheckTexts    []string
 
 	photoIndexFaceCheckCmd = &cobra.Command{
 		Use:   "photoindex-facecheck",
-		Short: "Check the face recognition service with one photo",
-		Long: `Sends one JPEG photo to the face recognition service (the Immich
-machine-learning container) and prints the faces found, to verify the setup
-before enabling face recognition. The first run downloads the models and can
-take a few minutes.
+		Short: "Check the machine-learning service with one photo",
+		Long: `Sends one JPEG photo to the machine-learning service (the Immich
+machine-learning container) and prints the faces found and how well some
+descriptions match the photo ("things pictured"), to verify the setup before
+enabling them. The first run downloads the models and can take a few minutes.
 
 Usage example:
 
@@ -60,6 +62,20 @@ sftpgo photoindex-facecheck --ml-url http://immich-ml:3003 --file /srv/fileshare
 				fmt.Printf("  face %d: box (%.0f,%.0f)-(%.0f,%.0f), score %.2f, embedding %d values\n",
 					i+1, f.X1, f.Y1, f.X2, f.Y2, f.Score, len(f.Embedding))
 			}
+			if faceCheckClip == "" {
+				return
+			}
+			start = time.Now()
+			scores, err := photoindex.CheckClip(context.Background(), faceCheckURL, faceCheckClip, data, faceCheckTexts)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "things pictured check failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Things pictured OK in %s (higher = better match, around 0.25+ is a match):\n",
+				time.Since(start).Round(time.Millisecond))
+			for i, t := range faceCheckTexts {
+				fmt.Printf("  %.3f  %s\n", scores[i], t)
+			}
 		},
 	}
 )
@@ -69,6 +85,10 @@ func init() {
 	photoIndexFaceCheckCmd.Flags().StringVar(&faceCheckFile, "file", "", "JPEG photo to analyze (required)")
 	photoIndexFaceCheckCmd.Flags().StringVar(&faceCheckModel, "model", "buffalo_l", "Face model")
 	photoIndexFaceCheckCmd.Flags().Float64Var(&faceCheckMinScore, "min-score", 0.7, "Minimum detection score")
+	photoIndexFaceCheckCmd.Flags().StringVar(&faceCheckClip, "clip-model", "ViT-B-32__openai",
+		"Model for things pictured, empty to skip that check")
+	photoIndexFaceCheckCmd.Flags().StringArrayVar(&faceCheckTexts, "describe",
+		[]string{"people", "a dog", "a beach", "food", "a car"}, "Descriptions to compare with the photo (repeatable)")
 	photoIndexFaceCheckCmd.MarkFlagRequired("file") //nolint:errcheck
 	rootCmd.AddCommand(photoIndexFaceCheckCmd)
 }

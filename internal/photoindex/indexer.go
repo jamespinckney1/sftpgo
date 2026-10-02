@@ -71,6 +71,10 @@ type Manager struct {
 	dupCh         chan struct{}
 	faceCh        chan struct{}
 	ml            *mlClient
+	facesOn       bool
+	clipOn        bool
+	clip          clipIndex
+	geo           *geocoder
 	faces         *faceEngine
 	mlDown        atomic.Bool
 	stop          chan struct{}
@@ -166,12 +170,28 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 	if m.exiftoolPath != "" {
 		m.exif = newExiftool(m.exiftoolPath)
 	}
-	if cfg.MLURL != "" {
-		if cfg.FaceModel == "" {
-			cfg.FaceModel = "buffalo_l"
+	if dir := findGeonamesDir(cfg.GeonamesDir, configDir); dir != "" {
+		start := time.Now()
+		g, err := loadGeocoder(dir)
+		if err != nil {
+			logger.Warn(logSender, "", "unable to load the place names from %q, places disabled: %v", dir, err)
+		} else {
+			m.geo = g
+			logger.Info(logSender, "", "place names loaded from %q: %s in %s", dir, g, time.Since(start).Round(time.Millisecond))
 		}
-		m.ml = newMLClient(cfg.MLURL, cfg.FaceModel, cfg.FaceMinScore)
-		logger.Info(logSender, "", "face recognition enabled, service %q, model %q", cfg.MLURL, cfg.FaceModel)
+	} else {
+		logger.Info(logSender, "", "no GeoNames data found, photos will not be placed by name")
+	}
+	if cfg.MLURL != "" && (cfg.FaceModel != "" || cfg.ClipModel != "") {
+		m.ml = newMLClient(cfg.MLURL, cfg.FaceModel, cfg.ClipModel, cfg.FaceMinScore)
+		m.facesOn = cfg.FaceModel != ""
+		m.clipOn = cfg.ClipModel != ""
+		logger.Info(logSender, "", "photo analysis enabled, service %q, face model %q, CLIP model %q",
+			cfg.MLURL, cfg.FaceModel, cfg.ClipModel)
+	}
+	if err := m.checkModels(); err != nil {
+		m.store.close() //nolint:errcheck
+		return nil, err
 	}
 	m.previewDisabled = cfg.PreviewSize <= 0 || m.vipsPath == ""
 	logger.Info(logSender, "", "photo index enabled, data dir %q, exiftool: %q, vipsthumbnail: %q, workers: %d",
@@ -192,12 +212,13 @@ func (m *Manager) start() {
 	m.wg.Go(m.eventLoop)
 	m.wg.Go(m.scanLoop)
 	m.wg.Go(m.dupLoop)
+	m.wg.Go(m.backfillPlaces)
 	if m.ml != nil {
-		m.wg.Go(m.faceLoop)
+		m.wg.Go(m.mlLoop)
 	}
 	// Pick up work left over from a previous run or a schema upgrade.
 	m.kickDuplicates()
-	m.kickFaces()
+	m.kickML()
 }
 
 // Stop stops the background goroutines and closes the database.
@@ -373,7 +394,7 @@ func (m *Manager) scan() {
 		if err := m.loadClusters(); err != nil {
 			logger.Warn(logSender, "", "unable to reload the face groups: %v", err)
 		}
-		m.kickFaces()
+		m.kickML()
 	}
 	logger.Info(logSender, "", "photo index scan completed in %s, files queued: %d",
 		time.Since(start).Round(time.Second), m.scanQueued.Load())
@@ -533,7 +554,7 @@ func (m *Manager) worker() {
 		m.inFlight.Add(-1)
 		m.processed.Add(1)
 		m.kickDuplicates()
-		m.kickFaces()
+		m.kickML()
 		if m.cfg.PauseBetweenFiles > 0 {
 			if !m.sleep(time.Duration(m.cfg.PauseBetweenFiles) * time.Millisecond) {
 				return
@@ -629,7 +650,7 @@ func (m *Manager) readMetadata(fsPath, kind string, info os.FileInfo) *Media {
 		// No exiftool: read the dimensions from the image header.
 		md.width, md.height = imageDimensions(fsPath)
 	}
-	return &Media{
+	rec := &Media{
 		Path:      fsPath,
 		Size:      info.Size(),
 		ModTime:   info.ModTime().UnixNano(),
@@ -644,7 +665,10 @@ func (m *Manager) readMetadata(fsPath, kind string, info os.FileInfo) *Media {
 		Camera:    md.camera,
 		Error:     errMsg,
 		IndexedAt: time.Now().Unix(),
+		GeoDone:   m.geo != nil,
 	}
+	m.geocode(rec)
+	return rec
 }
 
 func (m *Manager) previewPath(id int64) string {
@@ -799,6 +823,9 @@ func (m *Manager) Search(dirs []string, q Query, fn func(Media) bool) error {
 	if err != nil {
 		return err
 	}
+	if q.Show != "" {
+		return m.searchShow(dirs, q, f, fn)
+	}
 	return m.store.query(dirs, f, fn)
 }
 
@@ -841,6 +868,14 @@ func (m *Manager) PreviewPath(fsPath string, modTime time.Time, size int64) (str
 		return "", false
 	}
 	return p, true
+}
+
+// MapTileURL returns the map tiles URL template for the Places page.
+func (m *Manager) MapTileURL() string {
+	if m.cfg.MapTileURL == "" {
+		return DefaultConfig().MapTileURL
+	}
+	return m.cfg.MapTileURL
 }
 
 // CanRender reports whether RenderJPEG can be used for the given file.

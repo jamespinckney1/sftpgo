@@ -400,8 +400,11 @@
       "max_source_size": 200,
       "exiftool_path": "",
       "vips_path": "",
+      "geonames_dir": "",
+      "map_tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       "ml_url": "",
       "face_model": "buffalo_l",
+      "clip_model": "ViT-B-32__openai",
       "face_min_score": 0.7,
       "face_match_threshold": 0.5
     },

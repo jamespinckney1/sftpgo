@@ -41,6 +41,10 @@ import (
 //	                            "rose"; person:"Grandma Rose" for spaces,
 //	                            person:#12 for a person by id. Repeat the
 //	                            filter for photos showing several people
+//	place:myrtle                photos taken in a town, state or country whose
+//	                            name contains "myrtle" (place:"New York")
+//	show:dog                    photos showing something, described in words:
+//	                            show:"dog on the beach", best matches first
 //
 // Size filters, for any file (with the photo filters, only photos/videos):
 //
@@ -63,7 +67,10 @@ type Query struct {
 	// PersonTerms are the "person:" values; the photos must show a person
 	// matching each of them.
 	PersonTerms []string
-	filter      dateFilter
+	// Show is the description of what the photos must show ("show:" values
+	// joined), ranked by similarity.
+	Show   string
+	filter dateFilter
 }
 
 // DupMode is a duplicate detection mode.
@@ -115,6 +122,20 @@ func ParseQuery(q string) (Query, error) {
 				err = fmt.Errorf("invalid filter %q, use person:name", tok)
 			}
 			res.PersonTerms = append(res.PersonTerms, value)
+			res.Photo = true
+		case "place", "where":
+			value = strings.TrimSpace(value)
+			if value == "" {
+				err = fmt.Errorf("invalid filter %q, use place:name", tok)
+			}
+			res.filter.placeTerms = append(res.filter.placeTerms, value)
+			res.Photo = true
+		case "show", "pictured":
+			value = strings.TrimSpace(value)
+			if value == "" {
+				err = fmt.Errorf("invalid filter %q, use show:description", tok)
+			}
+			res.Show = strings.TrimSpace(res.Show + " " + value)
 			res.Photo = true
 		case "sort":
 			if !strings.EqualFold(value, "size") {

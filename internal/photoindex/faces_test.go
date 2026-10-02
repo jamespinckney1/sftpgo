@@ -118,7 +118,7 @@ func TestFaces(t *testing.T) {
 	require.NoError(t, m.loadClusters())
 
 	assert.Equal(t, int64(5), m.faceStatus().Pending)
-	n, err := m.faceBatch()
+	n, err := m.mlBatch()
 	require.NoError(t, err)
 	assert.Equal(t, 5, n)
 	st := m.faceStatus()
@@ -226,7 +226,7 @@ func TestFaces(t *testing.T) {
 	// A new photo of a named person is recognized automatically.
 	facePhoto(t, filepath.Join(root, "new.jpg"), 80, red)
 	indexWithPreviews(t, m, root)
-	_, err = m.faceBatch()
+	_, err = m.mlBatch()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"new.jpg", "p1.jpg", "p2.jpg"}, searchNames(t, m, root, "person:rose"))
 
@@ -253,7 +253,7 @@ func TestFaces(t *testing.T) {
 	facePhoto(t, filepath.Join(root, "p2.jpg"), 70, red, green)
 	indexWithPreviews(t, m, root)
 	assert.Equal(t, int64(1), m.faceStatus().Pending)
-	_, err = m.faceBatch()
+	_, err = m.mlBatch()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"p2.jpg", "p3.jpg"}, searchNames(t, m, root, "person:carol"),
 		"the new green face matches Carol, whose face was placed by hand")
@@ -270,11 +270,11 @@ func TestFaces(t *testing.T) {
 	facePhoto(t, filepath.Join(root, "later.jpg"), 60, red)
 	indexWithPreviews(t, m, root)
 	ml.Down.Store(true)
-	_, err = m.faceBatch()
+	_, err = m.mlBatch()
 	assert.ErrorIs(t, err, errMLUnavailable)
 	assert.Equal(t, int64(1), m.faceStatus().Pending)
 	ml.Down.Store(false)
-	_, err = m.faceBatch()
+	_, err = m.mlBatch()
 	require.NoError(t, err)
 	assert.Zero(t, m.faceStatus().Pending)
 

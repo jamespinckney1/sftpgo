@@ -67,13 +67,27 @@ type Config struct {
 	// generate previews. If empty it is looked up in the PATH; if it is not
 	// found no previews are generated.
 	VipsPath string `json:"vips_path" mapstructure:"vips_path"`
+	// GeonamesDir is the directory with the GeoNames files used to name the
+	// places where photos were taken (cities500.zip, admin1CodesASCII.txt,
+	// countryInfo.txt). If empty, "geonames" in the config dir and
+	// /usr/share/sftpgo/geonames are tried; without them photos keep their
+	// GPS position but have no place name.
+	GeonamesDir string `json:"geonames_dir" mapstructure:"geonames_dir"`
+	// MapTileURL is the map tiles URL template used by the Places page. The
+	// browser loads the tiles directly. Default: OpenStreetMap.
+	MapTileURL string `json:"map_tile_url" mapstructure:"map_tile_url"`
 	// MLURL is the URL of the face recognition service, the Immich
 	// machine-learning container, e.g. "http://immich-ml:3003". Empty
 	// disables face recognition.
 	MLURL string `json:"ml_url" mapstructure:"ml_url"`
 	// FaceModel is the face model the service uses. Default "buffalo_l", the
-	// most accurate; "buffalo_s" is faster and lighter.
+	// most accurate; "buffalo_s" is faster and lighter. Empty disables face
+	// recognition.
 	FaceModel string `json:"face_model" mapstructure:"face_model"`
+	// ClipModel is the CLIP model used for the "things pictured" search
+	// (show:). Default "ViT-B-32__openai"; empty disables it. Changing it
+	// requires analyzing every photo again.
+	ClipModel string `json:"clip_model" mapstructure:"clip_model"`
 	// FaceMinScore is the minimum detection confidence, 0..1, for a face to be
 	// kept. Default 0.7.
 	FaceMinScore float64 `json:"face_min_score" mapstructure:"face_min_score"`
@@ -97,7 +111,9 @@ func DefaultConfig() Config {
 		ExiftoolPath:       "",
 		VipsPath:           "",
 		MLURL:              "",
+		MapTileURL:         "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 		FaceModel:          "buffalo_l",
+		ClipModel:          "ViT-B-32__openai",
 		FaceMinScore:       0.7,
 		FaceMatchThreshold: 0.5,
 	}

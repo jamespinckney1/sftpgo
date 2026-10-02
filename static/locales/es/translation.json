@@ -8,6 +8,7 @@
         "files": "Archivos",
         "shares": "Compartidos",
         "people": "Personas",
+        "places": "Lugares",
         "add_share": "Añadir compartido",
         "update_share": "Actualizar compartido",
         "two_factor_auth": "Autenticación de dos factores",
@@ -284,12 +285,13 @@
             "location": "Ubicación",
             "taken": "Tomada",
             "taken_unknown": "Sin fecha en los metadatos ni en el nombre: se muestra la fecha de modificación",
-            "photo_help": "Búsqueda: un nombre (comodines * y ?), fotos por fecha taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown; personas person:rose (person:\"Abuela Rosa\", repita para varias personas); duplicados is:duplicate o is:similar; tamaño larger:100MB, smaller:1MB, sort:size. Se pueden combinar, p. ej. \"person:rose taken:2019\"",
+            "photo_help": "Búsqueda: un nombre (comodines * y ?); taken:2023, taken:2023-06..2023-08, taken:unknown; person:rose (person:\"Abuela Rosa\"); place:madrid (place:\"New York\"); show:perro (show:\"perro en la playa\", mejores resultados primero); is:duplicate, is:similar; larger:100MB, smaller:1MB, sort:size. Se pueden combinar, p. ej. \"person:rose place:madrid taken:2019\"",
             "photo_indexing": "Indexando fotos: {{total}} indexadas.",
             "photo_indexing_progress": "Pasada actual: {{done}} de {{queued}}.",
             "photo_query_invalid": "Búsqueda de fotos no válida. Use por ejemplo taken:2023, taken:2023-06 o taken:2023-06..2023-08",
             "photo_index_disabled": "La búsqueda de fotos no está habilitada en este servidor",
-            "photo_faces": "Buscando caras: quedan {{count}} fotos.",
+            "photo_faces": "Analizando fotos (caras, contenido): quedan {{count}}.",
+            "show_unavailable": "La búsqueda \"show:\" no está disponible: el servicio de análisis de fotos no está configurado o no está accesible",
             "size_help": "Búsqueda: un nombre (comodines * y ?); tamaño larger:100MB, smaller:1MB, sort:size (los más grandes primero). Se pueden combinar, p. ej. \"*.mov larger:1GB\"",
             "duplicates": "Duplicados",
             "dup_select": "Seleccionar copias sobrantes",
@@ -1191,5 +1193,13 @@
         "saved": "Guardado",
         "merge_confirm": "\"{{name}}\" ya existe. ¿Unir estas caras a {{name}}?",
         "merge": "Unir"
+    },
+    "places": {
+        "filter": "Filtrar lugares",
+        "no_names": "Los nombres de lugares no están disponibles en este servidor: las fotos se muestran solo en el mapa.",
+        "open_folder": "Abrir carpeta",
+        "photo_count": "Fotos: {{count}}",
+        "summary": "Fotos con ubicación: {{photos}} · lugares: {{places}}",
+        "empty": "Aún no hay fotos con ubicación: las fotos tomadas con GPS (la mayoría de los teléfonos) aparecen aquí una vez indexadas."
     }
 }

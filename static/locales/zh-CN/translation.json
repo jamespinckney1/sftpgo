@@ -8,6 +8,7 @@
         "files": "文件",
         "shares": "分享",
         "people": "人物",
+        "places": "地点",
         "add_share": "添加分享",
         "update_share": "更新分享",
         "two_factor_auth": "两步验证",
@@ -284,12 +285,13 @@
             "location": "位置",
             "taken": "拍摄时间",
             "taken_unknown": "照片元数据和文件名中没有日期：显示的是文件修改日期",
-            "photo_help": "搜索：名称（支持 * 和 ? 通配符），按拍摄日期 taken:2023、taken:2023-06..2023-08、taken:any、taken:unknown；人物 person:rose（person:\"Grandma Rose\"，多人时重复使用）；重复 is:duplicate 或 is:similar；大小 larger:100MB、smaller:1MB、sort:size。可组合使用，例如 \"person:rose taken:2019\"",
+            "photo_help": "搜索：名称（支持 * 和 ? 通配符）；taken:2023、taken:2023-06..2023-08、taken:unknown；person:rose（person:\"Grandma Rose\"）；place:beijing（place:\"New York\"）；show:dog（show:\"dog on the beach\"，最佳匹配在前，建议使用英文描述）；is:duplicate、is:similar；larger:100MB、smaller:1MB、sort:size。可组合使用，例如 \"person:rose place:beijing taken:2019\"",
             "photo_indexing": "正在索引照片：已索引 {{total}} 张。",
             "photo_indexing_progress": "本轮进度：{{done}} / {{queued}}。",
             "photo_query_invalid": "无效的照片搜索。例如使用 taken:2023、taken:2023-06 或 taken:2023-06..2023-08",
             "photo_index_disabled": "此服务器未启用照片搜索",
-            "photo_faces": "正在识别人脸：剩余 {{count}} 张照片。",
+            "photo_faces": "正在分析照片（人脸、内容）：剩余 {{count}} 张。",
+            "show_unavailable": "\"show:\" 搜索不可用：照片分析服务未配置或无法访问",
             "size_help": "搜索：名称（支持 * 和 ? 通配符）；大小 larger:100MB、smaller:1MB、sort:size（最大的在前）。可组合使用，例如 \"*.mov larger:1GB\"",
             "duplicates": "重复项",
             "dup_select": "选择多余的副本",
@@ -1191,5 +1193,13 @@
         "saved": "已保存",
         "merge_confirm": "“{{name}}”已存在。将这些人脸合并到 {{name}}？",
         "merge": "合并"
+    },
+    "places": {
+        "filter": "筛选地点",
+        "no_names": "此服务器上没有地名数据：照片仅显示在地图上。",
+        "open_folder": "打开文件夹",
+        "photo_count": "照片：{{count}}",
+        "summary": "有位置的照片：{{photos}} · 地点：{{places}}",
+        "empty": "暂无带位置的照片：用 GPS 拍摄的照片（大多数手机）在索引后会显示在这里。"
     }
 }

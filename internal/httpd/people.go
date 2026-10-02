@@ -73,6 +73,12 @@ func getPeopleContext(w http.ResponseWriter, r *http.Request) (*peopleContext, b
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return nil, false
 	}
+	return getPhotoUserContext(w, r, m)
+}
+
+// getPhotoUserContext checks that the user may use the WebClient and returns
+// the functions mapping indexed files to what the user can see.
+func getPhotoUserContext(w http.ResponseWriter, r *http.Request, m *photoindex.Manager) (*peopleContext, bool) {
 	claims, err := jwt.FromContext(r.Context())
 	if err != nil || claims.Username == "" {
 		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)

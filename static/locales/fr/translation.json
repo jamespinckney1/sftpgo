@@ -8,6 +8,7 @@
         "files": "Fichiers",
         "shares": "Partages",
         "people": "Personnes",
+        "places": "Lieux",
         "add_share": "Ajouter un partage",
         "update_share": "Mettre à jour le partage",
         "two_factor_auth": "Authentification à deux facteurs",
@@ -284,12 +285,13 @@
             "location": "Emplacement",
             "taken": "Prise le",
             "taken_unknown": "Aucune date dans les métadonnées ou le nom du fichier : la date de modification est affichée",
-            "photo_help": "Recherche : un nom (jokers * et ?), photos par date taken:2023, taken:2023-06..2023-08, taken:any, taken:unknown ; personnes person:rose (person:\"Mamie Rose\", à répéter pour plusieurs personnes) ; doublons is:duplicate ou is:similar ; taille larger:100MB, smaller:1MB, sort:size. Combinables, par ex. \"person:rose taken:2019\"",
+            "photo_help": "Recherche : un nom (jokers * et ?) ; taken:2023, taken:2023-06..2023-08, taken:unknown ; person:rose (person:\"Mamie Rose\") ; place:paris (place:\"New York\") ; show:chien (show:\"chien sur la plage\", meilleurs résultats d'abord) ; is:duplicate, is:similar ; larger:100MB, smaller:1MB, sort:size. Combinables, par ex. \"person:rose place:paris taken:2019\"",
             "photo_indexing": "Indexation des photos : {{total}} indexées.",
             "photo_indexing_progress": "Passage en cours : {{done}} sur {{queued}}.",
             "photo_query_invalid": "Recherche de photos invalide. Utilisez par exemple taken:2023, taken:2023-06 ou taken:2023-06..2023-08",
             "photo_index_disabled": "La recherche de photos n'est pas activée sur ce serveur",
-            "photo_faces": "Recherche de visages : encore {{count}} photos.",
+            "photo_faces": "Analyse des photos (visages, contenu) : encore {{count}}.",
+            "show_unavailable": "La recherche \"show:\" n'est pas disponible : le service d'analyse des photos n'est pas configuré ou est injoignable",
             "size_help": "Recherche : un nom (jokers * et ?) ; taille larger:100MB, smaller:1MB, sort:size (les plus gros d'abord). Combinables, par ex. \"*.mov larger:1GB\"",
             "duplicates": "Doublons",
             "dup_select": "Sélectionner les copies en trop",
@@ -1191,5 +1193,13 @@
         "saved": "Enregistré",
         "merge_confirm": "« {{name}} » existe déjà. Fusionner ces visages avec {{name}} ?",
         "merge": "Fusionner"
+    },
+    "places": {
+        "filter": "Filtrer les lieux",
+        "no_names": "Les noms de lieux ne sont pas disponibles sur ce serveur : les photos sont affichées uniquement sur la carte.",
+        "open_folder": "Ouvrir le dossier",
+        "photo_count": "Photos : {{count}}",
+        "summary": "Photos avec un lieu : {{photos}} · lieux : {{places}}",
+        "empty": "Pas encore de photos avec un lieu : les photos prises avec le GPS (la plupart des téléphones) apparaissent ici une fois indexées."
     }
 }

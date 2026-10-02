@@ -24,7 +24,7 @@ import (
 
 // schemaVersion is the current version of the index schema. Later phases (CLIP
 // embeddings, faces) add tables through new migrations.
-const schemaVersion = 3
+const schemaVersion = 4
 
 var migrations = []string{
 	// version 1
@@ -87,6 +87,17 @@ var migrations = []string{
 		WHEN OLD.size != NEW.size OR OLD.mtime != NEW.mtime BEGIN
 		DELETE FROM faces WHERE media_id = NEW.id;
 	END;`,
+	// version 4: places and "things pictured". The place is the nearest town
+	// to the GPS position (geo_done is 0 until computed); clip is the CLIP
+	// image embedding (512 float32, little endian, unit length) and
+	// clip_state 0 (to do), 1 (done) or 2 (failed).
+	`ALTER TABLE media ADD COLUMN place_city TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN place_state TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN place_country TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN geo_done INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE media ADD COLUMN clip BLOB;
+	ALTER TABLE media ADD COLUMN clip_state INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX media_clip_todo_idx ON media(clip_state) WHERE clip_state = 0;`,
 }
 
 // Media is an indexed photo or video.
@@ -109,6 +120,13 @@ type Media struct {
 	IndexedAt  int64
 	Hash       string // SHA-256 of the content, empty if not computed
 	PHash      *int64 // perceptual hash, nil if not computed
+	City       string
+	State      string
+	Country    string
+	// GeoDone is true if the place was computed from the GPS position.
+	GeoDone bool
+	// Score is the relevance of a "show:" search result.
+	Score float32
 }
 
 // TakenTime returns the date taken as a time.Time in the UTC location holding
@@ -122,8 +140,26 @@ type store struct {
 	db *sql.DB
 }
 
+func (s *store) setting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *store) setSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
 func (s *store) migrate() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return err
 	}
 	var current int
@@ -172,7 +208,7 @@ func prefixRange(dir string) (string, string) {
 }
 
 const mediaColumns = `id, path, size, mtime, kind, taken, taken_src, tz_offset, width, height, lat, lon,
-	camera, has_preview, error, indexed_at, hash, phash`
+	camera, has_preview, error, indexed_at, hash, phash, place_city, place_state, place_country`
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -183,7 +219,8 @@ func scanMedia(row scanner) (Media, error) {
 	var lat, lon sql.NullFloat64
 	var phash sql.NullInt64
 	err := row.Scan(&m.ID, &m.Path, &m.Size, &m.ModTime, &m.Kind, &m.Taken, &m.TakenSrc, &m.TZOffset,
-		&m.Width, &m.Height, &lat, &lon, &m.Camera, &m.HasPreview, &m.Error, &m.IndexedAt, &m.Hash, &phash)
+		&m.Width, &m.Height, &lat, &lon, &m.Camera, &m.HasPreview, &m.Error, &m.IndexedAt, &m.Hash, &phash,
+		&m.City, &m.State, &m.Country)
 	if lat.Valid && lon.Valid {
 		m.Lat, m.Lon = &lat.Float64, &lon.Float64
 	}
@@ -238,15 +275,17 @@ func (s *store) upsert(m *Media) (int64, error) {
 	}
 	var id int64
 	err := s.db.QueryRow(`INSERT INTO media (path, size, mtime, kind, taken, taken_src, tz_offset, width, height,
-		lat, lon, camera, has_preview, error, indexed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		lat, lon, camera, has_preview, error, indexed_at, place_city, place_state, place_country, geo_done)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, kind=excluded.kind,
 		taken=excluded.taken, taken_src=excluded.taken_src, tz_offset=excluded.tz_offset, width=excluded.width,
 		height=excluded.height, lat=excluded.lat, lon=excluded.lon, camera=excluded.camera,
 		has_preview=excluded.has_preview, error=excluded.error, indexed_at=excluded.indexed_at,
-		hash='', phash=NULL, phash_tried=0, faces_state=0
+		place_city=excluded.place_city, place_state=excluded.place_state, place_country=excluded.place_country,
+		geo_done=excluded.geo_done, hash='', phash=NULL, phash_tried=0, faces_state=0, clip=NULL, clip_state=0
 		RETURNING id`,
 		m.Path, m.Size, m.ModTime, m.Kind, m.Taken, m.TakenSrc, m.TZOffset, m.Width, m.Height, lat, lon,
-		m.Camera, m.HasPreview, m.Error, m.IndexedAt).Scan(&id)
+		m.Camera, m.HasPreview, m.Error, m.IndexedAt, m.City, m.State, m.Country, m.GeoDone).Scan(&id)
 	return id, err
 }
 
@@ -370,6 +409,8 @@ type dateFilter struct {
 	sortBySize  bool   // largest first instead of newest first
 	onlyHashed  bool   // only files whose content hash is shared with another file
 	onlyPHash   bool   // only files with a perceptual hash
+	// placeTerms: the place (town, state or country) must contain each one.
+	placeTerms []string
 	// personSets: for each set, the photo must show one of its people.
 	personSets [][]int64
 }
@@ -439,6 +480,10 @@ func (f *dateFilter) where(dirs []string) (string, []any) {
 	}
 	if f.onlyPHash {
 		add(`phash IS NOT NULL`)
+	}
+	for _, t := range f.placeTerms {
+		add(`(instr(lower(place_city), lower(?)) > 0 OR instr(lower(place_state), lower(?)) > 0
+			OR instr(lower(place_country), lower(?)) > 0)`, t, t, t)
 	}
 	for _, ids := range f.personSets {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")

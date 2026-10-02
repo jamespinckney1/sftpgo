@@ -196,8 +196,8 @@ func (fe *faceEngine) bestCluster(emb []float32) (int64, bool) {
 	return best, bestSim >= fe.threshold
 }
 
-// kickFaces wakes the face worker.
-func (m *Manager) kickFaces() {
+// kickML wakes the machine-learning worker.
+func (m *Manager) kickML() {
 	if m.ml == nil {
 		return
 	}
@@ -207,10 +207,11 @@ func (m *Manager) kickFaces() {
 	}
 }
 
-// faceLoop sends the previews of the photos not processed yet to the face
-// recognition service while the indexer is idle, and retries with a growing
-// delay while the service is unreachable.
-func (m *Manager) faceLoop() {
+// mlLoop sends the previews of the photos not analyzed yet to the
+// machine-learning service (faces and/or CLIP, in a single request per photo)
+// while the indexer is idle, and retries with a growing delay while the
+// service is unreachable.
+func (m *Manager) mlLoop() {
 	if err := m.loadClusters(); err != nil {
 		logger.Error(logSender, "", "unable to load the face groups: %v", err)
 	}
@@ -227,10 +228,10 @@ func (m *Manager) faceLoop() {
 					return
 				}
 			}
-			n, err := m.faceBatch()
+			n, err := m.mlBatch()
 			if errors.Is(err, errMLUnavailable) {
 				m.mlDown.Store(true)
-				logger.Warn(logSender, "", "face recognition paused, retrying in %s: %v", retry, err)
+				logger.Warn(logSender, "", "photo analysis paused, retrying in %s: %v", retry, err)
 				if !m.sleep(retry) {
 					return
 				}
@@ -238,7 +239,7 @@ func (m *Manager) faceLoop() {
 				continue
 			}
 			if err != nil {
-				logger.Warn(logSender, "", "face recognition: %v", err)
+				logger.Warn(logSender, "", "photo analysis: %v", err)
 				break
 			}
 			m.mlDown.Store(false)
@@ -250,43 +251,64 @@ func (m *Manager) faceLoop() {
 	}
 }
 
-// faceCandidates returns photos still to process. Photos are read through
-// their preview; when previews are disabled, the originals are used instead.
-func (s *store) faceCandidates(limit int, noPreviews bool) ([]Media, error) {
-	rows, err := s.db.Query(`SELECT `+mediaColumns+` FROM media WHERE faces_state = ? AND (has_preview = 1 OR ?)
-		AND kind != ? ORDER BY id LIMIT ?`, facesTodo, noPreviews, KindVideo, limit)
+// mlTodo is a photo with pending machine-learning work.
+type mlTodo struct {
+	Media
+	faces bool
+	clip  bool
+}
+
+// mlPendingCondition selects the photos with pending work. Photos are read
+// through their preview; when previews are disabled, the originals are used.
+func (m *Manager) mlPendingCondition() (string, []any) {
+	return `kind != ? AND (has_preview = 1 OR ?) AND ((? AND faces_state = 0) OR (? AND clip_state = 0))`,
+		[]any{KindVideo, m.previewDisabled, m.facesOn, m.clipOn}
+}
+
+func (m *Manager) mlCandidates(limit int) ([]mlTodo, error) {
+	cond, args := m.mlPendingCondition()
+	rows, err := m.store.db.Query(`SELECT `+mediaColumns+`, faces_state, clip_state FROM media WHERE `+cond+
+		` ORDER BY id LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var res []Media
+	var res []mlTodo
 	for rows.Next() {
-		m, err := scanMedia(rows)
+		var t mlTodo
+		var lat, lon sql.NullFloat64
+		var phash sql.NullInt64
+		var facesState, clipState int
+		err := rows.Scan(&t.ID, &t.Path, &t.Size, &t.ModTime, &t.Kind, &t.Taken, &t.TakenSrc, &t.TZOffset,
+			&t.Width, &t.Height, &lat, &lon, &t.Camera, &t.HasPreview, &t.Error, &t.IndexedAt, &t.Hash, &phash,
+			&t.City, &t.State, &t.Country, &facesState, &clipState)
 		if err != nil {
 			return nil, err
 		}
-		res = append(res, m)
+		t.faces = m.facesOn && facesState == facesTodo
+		t.clip = m.clipOn && clipState == facesTodo
+		res = append(res, t)
 	}
 	return res, rows.Err()
 }
 
-func (m *Manager) faceBatch() (int, error) {
-	recs, err := m.store.faceCandidates(dupBatchSize, m.previewDisabled)
+func (m *Manager) mlBatch() (int, error) {
+	todos, err := m.mlCandidates(dupBatchSize)
 	if err != nil {
 		return 0, err
 	}
 	processed := 0
-	for i := range recs {
+	for i := range todos {
 		if m.stopping() || m.busy() {
 			return processed, nil
 		}
-		if err := m.detectFaces(&recs[i]); err != nil {
+		t := &todos[i]
+		if err := m.analyzePhoto(t); err != nil {
 			if errors.Is(err, errMLUnavailable) {
 				return processed, err
 			}
-			logger.Debug(logSender, "", "face detection failed for %q: %v", recs[i].Path, err)
-			if _, err := m.store.db.Exec(`UPDATE media SET faces_state = ? WHERE id = ? AND size = ? AND mtime = ?`,
-				facesFailed, recs[i].ID, recs[i].Size, recs[i].ModTime); err != nil {
+			logger.Debug(logSender, "", "analysis failed for %q: %v", t.Path, err)
+			if err := m.markAnalysisFailed(t); err != nil {
 				return processed, err
 			}
 		}
@@ -295,16 +317,40 @@ func (m *Manager) faceBatch() (int, error) {
 	return processed, nil
 }
 
-// detectFaces finds the faces of an indexed photo, groups them and stores
-// them.
-func (m *Manager) detectFaces(rec *Media) error {
-	data, err := m.faceSource(rec.ID, rec.Path, rec.Size)
+func (m *Manager) markAnalysisFailed(t *mlTodo) error {
+	if t.faces {
+		if _, err := m.store.db.Exec(`UPDATE media SET faces_state = ? WHERE id = ? AND size = ? AND mtime = ?`,
+			facesFailed, t.ID, t.Size, t.ModTime); err != nil {
+			return err
+		}
+	}
+	if t.clip {
+		if _, err := m.store.db.Exec(`UPDATE media SET clip_state = ? WHERE id = ? AND size = ? AND mtime = ?`,
+			facesFailed, t.ID, t.Size, t.ModTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// analyzePhoto asks the service for the pending analyses of a photo and
+// stores the results.
+func (m *Manager) analyzePhoto(t *mlTodo) error {
+	data, err := m.faceSource(t.ID, t.Path, t.Size)
 	if err != nil {
 		return err
 	}
-	res, err := m.ml.detectFaces(context.Background(), data)
+	res, err := m.ml.analyze(context.Background(), data, t.faces, t.clip)
 	if err != nil {
 		return err
+	}
+	if t.clip {
+		if err := m.storeClip(&t.Media, res.Clip); err != nil {
+			return err
+		}
+	}
+	if !t.faces {
+		return nil
 	}
 	w, h := res.Width, res.Height
 	if w <= 0 || h <= 0 {
@@ -323,7 +369,7 @@ func (m *Manager) detectFaces(rec *Media) error {
 		f.Y1, f.Y2 = clamp01(f.Y1/float64(h)), clamp01(f.Y2/float64(h))
 		faces = append(faces, f)
 	}
-	return m.storeFaces(rec, faces)
+	return m.storeFaces(&t.Media, faces)
 }
 
 // faceSource returns the JPEG to analyze for a photo: its preview, or the
@@ -818,6 +864,7 @@ func (m *Manager) resolvePeople(term string) ([]int64, error) {
 // FaceStatus describes the face recognition progress.
 type FaceStatus struct {
 	Enabled    bool  `json:"enabled"`
+	Clip       bool  `json:"clip"`
 	Pending    int64 `json:"pending"`
 	Faces      int64 `json:"faces"`
 	Named      int64 `json:"named"`
@@ -825,12 +872,12 @@ type FaceStatus struct {
 }
 
 func (m *Manager) faceStatus() FaceStatus {
-	st := FaceStatus{Enabled: m.ml != nil, ServiceOff: m.mlDown.Load()}
+	st := FaceStatus{Enabled: m.facesOn, Clip: m.clipOn, ServiceOff: m.mlDown.Load()}
 	if m.ml == nil {
 		return st
 	}
-	st.Pending = m.store.count(`SELECT COUNT(*) FROM media WHERE faces_state = ? AND (has_preview = 1 OR ?)
-		AND kind != ?`, facesTodo, m.previewDisabled, KindVideo)
+	cond, args := m.mlPendingCondition()
+	st.Pending = m.store.count(`SELECT COUNT(*) FROM media WHERE `+cond, args...)
 	st.Faces = m.store.count(`SELECT COUNT(*) FROM faces`)
 	st.Named = m.store.count(`SELECT COUNT(*) FROM people WHERE name != ''`)
 	return st
@@ -838,17 +885,45 @@ func (m *Manager) faceStatus() FaceStatus {
 
 // FacesEnabled reports whether face recognition is configured.
 func (m *Manager) FacesEnabled() bool {
-	return m != nil && m.ml != nil
+	return m != nil && m.facesOn
+}
+
+// ClipEnabled reports whether "things pictured" search is configured.
+func (m *Manager) ClipEnabled() bool {
+	return m != nil && m.clipOn
 }
 
 // CheckFaces sends one image to the face recognition service and returns the
 // result, to verify the setup.
 func CheckFaces(ctx context.Context, url, model string, minScore float64, jpeg []byte) (MLResult, error) {
-	c := newMLClient(url, model, minScore)
+	c := newMLClient(url, model, "", minScore)
 	if err := c.ping(ctx); err != nil {
 		return MLResult{}, err
 	}
 	return c.detectFaces(ctx, jpeg)
+}
+
+// CheckClip sends one image and some descriptions to the CLIP model of the
+// machine-learning service and returns the similarity of each description
+// with the image, to verify the setup.
+func CheckClip(ctx context.Context, url, model string, jpeg []byte, texts []string) ([]float32, error) {
+	c := newMLClient(url, "", model, 0)
+	if err := c.ping(ctx); err != nil {
+		return nil, err
+	}
+	res, err := c.analyze(ctx, jpeg, false, true)
+	if err != nil {
+		return nil, err
+	}
+	scores := make([]float32, 0, len(texts))
+	for _, t := range texts {
+		v, err := c.encodeText(ctx, t)
+		if err != nil {
+			return nil, err
+		}
+		scores = append(scores, dot(v, res.Clip))
+	}
+	return scores, nil
 }
 
 // FaceCrop returns a square JPEG thumbnail, size pixels wide, of a face cut

@@ -1045,10 +1045,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                 let txt = row["taken_src"] == "filename" || row["taken_src"] == "mtime" ?
                                     $.t('general.datetime', { val: d, formatParams: { val: { year: 'numeric', month: 'numeric', day: 'numeric' } } }) :
                                     $.t('general.datetime', { val: d, formatParams: { val: { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' } } });
+                                // Where the photo was taken, when known (Places).
+                                let place = row["place"] ? `<div class="text-muted fs-8">${escapeHTML(row["place"])}</div>` : "";
                                 if (row["taken_src"] == "mtime") {
-                                    return `<span class="text-gray-500" title="${attrEscape($.t('fs.search.taken_unknown'))}">${txt} ?</span>`;
+                                    return `<span class="text-gray-500" title="${attrEscape($.t('fs.search.taken_unknown'))}">${txt} ?</span>${place}`;
                                 }
-                                return txt;
+                                return txt + place;
                             }
                             return data || "";
                         }
@@ -1476,12 +1478,15 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         var searchKind = "name";
 
         function isPhotoQuery(q) {
-            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is|person|who):/i.test(q);
+            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is|person|who|place|where|show|pictured):/i.test(q);
         }
 
         function getSearchKind(q) {
             if (PHOTO_STATUS_URL !== "" && /(^|\s)is:(duplicates?|dup|similar)(\s|$)/i.test(q)) {
                 return "dup";
+            }
+            if (PHOTO_STATUS_URL !== "" && /(^|\s)(show|pictured):/i.test(q)) {
+                return "show";
             }
             if (/(^|\s)(larger|smaller|sort):/i.test(q)) {
                 return "size";
@@ -1517,11 +1522,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             searchMode = true;
             searchKind = getSearchKind(q);
             setPathColumnVisible(true);
-            dt.column(TAKEN_COLUMN_INDEX).visible(searchKind === "photo" || searchKind === "dup", false);
+            dt.column(TAKEN_COLUMN_INDEX).visible(searchKind === "photo" || searchKind === "dup" || searchKind === "show", false);
             dt.column(DUP_COLUMN_INDEX).visible(searchKind === "dup", false);
             $('#id_dup_select_button').toggleClass("d-none", searchKind !== "dup");
-            if (searchKind === "dup") {
-                // Keep the server order: grouped, the copy to keep first.
+            if (searchKind === "dup" || searchKind === "show") {
+                // Keep the server order: grouped (the copy to keep first), or
+                // the best matches first.
                 dt.order([]);
             } else if (searchKind === "size") {
                 dt.order([SIZE_COLUMN_INDEX, 'desc']);

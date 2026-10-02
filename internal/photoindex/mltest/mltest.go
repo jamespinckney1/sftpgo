@@ -14,9 +14,14 @@
 
 // Package mltest provides a stand-in for the Immich machine-learning service,
 // for tests. It speaks the same /predict protocol but, instead of running
-// neural networks, "detects" as faces the solid squares drawn in pure
-// identity colors (see Identities) and returns, for each, an embedding close
-// to that identity's fixed vector.
+// neural networks:
+//
+//   - it "detects" as faces the solid squares drawn in pure identity colors
+//     (see Identities) and returns, for each, an embedding close to that
+//     identity's fixed vector;
+//   - its "CLIP" sees colors: an image shows the color names (see Concepts)
+//     of the colors covering at least 1% of it, and a text means the color
+//     names it contains, so "show:red" finds the images with red in them.
 package mltest
 
 import (
@@ -102,9 +107,22 @@ func (s *Server) predict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad entries: "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	fr := entries["facial-recognition"]
-	if fr == nil || fr["detection"]["modelName"] == nil || fr["recognition"]["modelName"] == nil {
+	fr, clip := entries["facial-recognition"], entries["clip"]
+	if (fr == nil && clip == nil) ||
+		(fr != nil && (fr["detection"]["modelName"] == nil || fr["recognition"]["modelName"] == nil)) {
 		http.Error(w, "unexpected entries", http.StatusUnprocessableEntity)
+		return
+	}
+	if clip != nil && clip["textual"] != nil {
+		s.encodeText(w, r, clip)
+		return
+	}
+	s.analyzeImage(w, r, fr != nil, clip)
+}
+
+func (s *Server) analyzeImage(w http.ResponseWriter, r *http.Request, faces bool, clip map[string]map[string]any) {
+	if clip != nil && (clip["visual"] == nil || clip["visual"]["modelName"] == nil) {
+		http.Error(w, "missing model", http.StatusUnprocessableEntity)
 		return
 	}
 	f, _, err := r.FormFile("image")
@@ -119,13 +137,111 @@ func (s *Server) predict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := img.Bounds()
-	faces := findFaces(img)
+	resp := map[string]any{"imageHeight": b.Dy(), "imageWidth": b.Dx()}
+	if faces {
+		resp["facial-recognition"] = findFaces(img)
+	}
+	if clip != nil {
+		resp["clip"] = vectorString(imageConcepts(img))
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Server) encodeText(w http.ResponseWriter, r *http.Request, clip map[string]map[string]any) {
+	if clip["textual"]["modelName"] == nil {
+		http.Error(w, "missing model", http.StatusUnprocessableEntity)
+		return
+	}
+	writeJSON(w, map[string]any{"clip": vectorString(textConcepts(r.FormValue("text")))})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-		"facial-recognition": faces,
-		"imageHeight":        b.Dy(),
-		"imageWidth":         b.Dx(),
-	})
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
+
+// Concepts are the words the fake CLIP understands, with their colors.
+var Concepts = map[string]color.RGBA{
+	"red":    {220, 30, 30, 255},
+	"blue":   {30, 30, 220, 255},
+	"green":  {30, 200, 30, 255},
+	"yellow": {230, 200, 20, 255},
+}
+
+// conceptVector is the fixed random direction of a word.
+func conceptVector(word string) []float64 {
+	var seed int64
+	for _, r := range word {
+		seed = seed*31 + int64(r)
+	}
+	r := rand.New(rand.NewSource(seed))
+	v := make([]float64, dims)
+	for j := range v {
+		v[j] = r.NormFloat64()
+	}
+	return v
+}
+
+func sumVectors(words []string) []float64 {
+	v := make([]float64, dims)
+	for _, w := range words {
+		for j, x := range conceptVector(w) {
+			v[j] += x
+		}
+	}
+	if len(words) == 0 {
+		v = conceptVector("nothing")
+	}
+	return v
+}
+
+func textConcepts(text string) []float64 {
+	var words []string
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		if _, ok := Concepts[w]; ok {
+			words = append(words, w)
+		}
+	}
+	if len(words) == 0 {
+		return conceptVector("text:" + text)
+	}
+	return sumVectors(words)
+}
+
+func imageConcepts(img image.Image) []float64 {
+	b := img.Bounds()
+	counts := make(map[string]int)
+	for y := b.Min.Y; y < b.Max.Y; y += 2 {
+		for x := b.Min.X; x < b.Max.X; x += 2 {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			for name, c := range Concepts {
+				if near(r>>8, c.R) && near(g>>8, c.G) && near(bl>>8, c.B) {
+					counts[name]++
+				}
+			}
+		}
+	}
+	total := (b.Dx() / 2) * (b.Dy() / 2)
+	var words []string
+	for name, n := range counts {
+		if n*100 >= total {
+			words = append(words, name)
+		}
+	}
+	return sumVectors(words)
+}
+
+func vectorString(v []float64) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for j, x := range v {
+		if j > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "%.5f", x)
+	}
+	sb.WriteString("]")
+	return sb.String()
 }
 
 type box struct{ x1, y1, x2, y2, n int }
