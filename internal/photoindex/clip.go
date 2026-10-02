@@ -36,10 +36,10 @@ const (
 	// showMaxResults is the number of best matches returned by a "show:"
 	// search: CLIP ranks every photo, so the tail is irrelevant.
 	showMaxResults = 300
-	// showMinScore drops the matches that are clearly unrelated. CLIP
-	// similarities between a text and a matching photo are typically
-	// 0.25-0.35, and around 0.15 for unrelated ones.
-	showMinScore = 0.18
+	// showMinScore drops the matches that are clearly unrelated. Measured
+	// with ViT-B-32__openai on a real photo: 0.20-0.26 for matching
+	// descriptions, 0.12-0.185 for unrelated ones.
+	showMinScore = 0.19
 	// textCacheSize is the number of text embeddings kept in memory.
 	textCacheSize = 256
 )

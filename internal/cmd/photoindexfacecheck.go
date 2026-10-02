@@ -71,7 +71,7 @@ sftpgo photoindex-facecheck --ml-url http://immich-ml:3003 --file /srv/fileshare
 				fmt.Fprintf(os.Stderr, "things pictured check failed: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Things pictured OK in %s (higher = better match, around 0.25+ is a match):\n",
+			fmt.Printf("Things pictured OK in %s (higher = better match, 0.19 or more counts as a match in search):\n",
 				time.Since(start).Round(time.Millisecond))
 			for i, t := range faceCheckTexts {
 				fmt.Printf("  %.3f  %s\n", scores[i], t)
