@@ -30,7 +30,9 @@ var (
 )
 
 func newOIDCManager(isShared int) oidcManager {
-	if isShared == 1 {
+	// Fork: with a fixed OIDC session lifetime the sessions are stored in the
+	// data provider, when it can, so they survive restarts.
+	if isShared == 1 || (oidcSessionLifetime > 0 && dataprovider.SupportsSharedSessions()) {
 		logger.Info(logSender, "", "using provider OIDC manager")
 		return &dbOIDCManager{}
 	}
@@ -103,7 +105,7 @@ func (o *memoryOIDCManager) getToken(cookie string) (oidcToken, error) {
 		return oidcToken{}, errors.New("oidc: no token found for the specified session")
 	}
 	diff := util.GetTimeAsMsSinceEpoch(time.Now()) - token.UsedAt
-	if diff > tokenDeleteInterval {
+	if diff > oidcIdleTimeout() {
 		return oidcToken{}, errors.New("oidc: token is too old")
 	}
 	return token, nil
@@ -148,7 +150,7 @@ func (o *memoryOIDCManager) cleanupTokens() {
 	for k, token := range o.tokens {
 		diff := util.GetTimeAsMsSinceEpoch(time.Now()) - token.UsedAt
 		// remove tokens unused from more than tokenDeleteInterval
-		if diff > tokenDeleteInterval {
+		if diff > oidcIdleTimeout() {
 			delete(o.tokens, k)
 		}
 	}
@@ -198,7 +200,7 @@ func (o *dbOIDCManager) addToken(token oidcToken) {
 		Key:       token.Cookie,
 		Data:      token,
 		Type:      dataprovider.SessionTypeOIDCToken,
-		Timestamp: token.UsedAt + tokenDeleteInterval,
+		Timestamp: token.UsedAt + oidcIdleTimeout(),
 	}
 	dataprovider.AddSharedSession(session) //nolint:errcheck
 }

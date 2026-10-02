@@ -1932,3 +1932,79 @@ func getPreLoginScriptContent(user dataprovider.User, nonJSONResponse bool) []by
 	}
 	return content
 }
+
+func TestOIDCSessionLifetime(t *testing.T) {
+	setOIDCSessionLifetime(60)
+	t.Cleanup(func() { setOIDCSessionLifetime(0) })
+	assert.Equal(t, int64(tokenDeleteInterval), oidcIdleTimeout(), "the idle timeout is never shorter than upstream")
+	setOIDCSessionLifetime(maxOIDCSessionLifetime + 1)
+	assert.Zero(t, oidcSessionLifetime)
+	setOIDCSessionLifetime(24 * 60)
+	assert.Equal(t, int64(24*3600*1000), oidcIdleTimeout())
+
+	username := "test_oidc_session_lifetime"
+	user := dataprovider.User{
+		BaseUser: sdk.BaseUser{
+			Username:    username,
+			Password:    "p",
+			HomeDir:     filepath.Join(os.TempDir(), username),
+			Status:      1,
+			Permissions: map[string][]string{"/": {dataprovider.PermAny}},
+		},
+	}
+	require.NoError(t, dataprovider.AddUser(&user, "", "", ""))
+	t.Cleanup(func() { dataprovider.DeleteUser(username, "", "", "") }) //nolint:errcheck
+
+	server := getTestOIDCServer()
+	require.NoError(t, server.binding.OIDC.initialize())
+	// The identity provider cannot refresh the token, as with Google.
+	server.binding.OIDC.oauth2Config = &mockOAuth2Config{
+		tokenSource: &mockTokenSource{err: common.ErrGenericFailure},
+	}
+	validate := func(token oidcToken) (oidcToken, error) {
+		oidcMgr.addToken(token)
+		r, err := http.NewRequest(http.MethodGet, webClientFilesPath, nil)
+		require.NoError(t, err)
+		r.Header.Set("Cookie", fmt.Sprintf("%v=%v", oidcCookieKey, token.Cookie))
+		return server.validateOIDCToken(httptest.NewRecorder(), r, false)
+	}
+	newToken := func(loginAgo time.Duration) oidcToken {
+		return oidcToken{
+			Cookie:      util.GenerateOpaqueString(),
+			AccessToken: xid.New().String(),
+			Username:    username,
+			ExpiresAt:   util.GetTimeAsMsSinceEpoch(time.Now().Add(-time.Minute)),
+			LoginAt:     util.GetTimeAsMsSinceEpoch(time.Now().Add(-loginAgo)),
+		}
+	}
+
+	// The provider's token expired an hour after login: the session goes on
+	// and the user is checked again a cookie lifetime later.
+	token, err := validate(newToken(61 * time.Minute))
+	require.NoError(t, err)
+	assert.False(t, token.isExpired())
+	stored, err := oidcMgr.getToken(token.Cookie)
+	require.NoError(t, err)
+	assert.Greater(t, stored.ExpiresAt, util.GetTimeAsMsSinceEpoch(time.Now().Add(cookieTokenDuration-time.Minute)))
+
+	// Past the session lifetime.
+	_, err = validate(newToken(25 * time.Hour))
+	assert.ErrorIs(t, err, errInvalidToken)
+	// Sessions started before the upgrade have no login time.
+	old := newToken(time.Minute)
+	old.LoginAt = 0
+	_, err = validate(old)
+	assert.ErrorIs(t, err, errInvalidToken)
+	// A disabled user is logged out.
+	user.Status = 0
+	require.NoError(t, dataprovider.UpdateUser(&user, "", "", ""))
+	_, err = validate(newToken(2 * time.Hour))
+	assert.ErrorIs(t, err, errInvalidToken)
+
+	// The cookie survives browser restarts.
+	rr := httptest.NewRecorder()
+	r, err := http.NewRequest(http.MethodGet, webClientFilesPath, nil)
+	require.NoError(t, err)
+	loginOIDCUser(rr, r, newToken(0), "")
+	assert.Contains(t, rr.Header().Get("Set-Cookie"), "Max-Age=86400")
+}

@@ -620,6 +620,12 @@ func ConvertName(name string) string {
 	return config.convertName(name)
 }
 
+// SupportsSharedSessions returns true if the configured provider can store
+// sessions (fork: used to keep OIDC sessions across restarts).
+func SupportsSharedSessions() bool {
+	return config.Driver == SQLiteDataProviderName || slices.Contains(sharedProviders, config.Driver)
+}
+
 // IsSharedMode returns true if the data provider is configured as shared (cluster mode).
 func IsSharedMode() bool {
 	return config.IsShared == 1

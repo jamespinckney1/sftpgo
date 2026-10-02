@@ -966,6 +966,12 @@ type Conf struct {
 	TokenValidation int `json:"token_validation" mapstructure:"token_validation"`
 	// CookieLifetime defines the duration of cookies for WebAdmin and WebClient
 	CookieLifetime int `json:"cookie_lifetime" mapstructure:"cookie_lifetime"`
+	// OIDCSessionLifetime (fork) is how long, in minutes, a WebClient/WebAdmin
+	// session started with OpenID Connect lasts, whatever the lifetime of the
+	// identity provider's token. The SFTPGo user is checked again every cookie
+	// lifetime. The session also survives browser and, with a SQL data
+	// provider, SFTPGo restarts. 0 keeps the upstream behavior.
+	OIDCSessionLifetime int `json:"oidc_session_lifetime" mapstructure:"oidc_session_lifetime"`
 	// ShareCookieLifetime defines the duration of cookies for public shares
 	ShareCookieLifetime int `json:"share_cookie_lifetime" mapstructure:"share_cookie_lifetime"`
 	// JWTLifetime defines the duration of JWT tokens used in REST API
@@ -1166,6 +1172,7 @@ func (c *Conf) Initialize(configDir string, isShared int) error {
 	configurationDir = configDir
 	invalidatedJWTTokens = newTokenManager(isShared)
 	resetCodesMgr = newResetCodeManager(isShared)
+	setOIDCSessionLifetime(c.OIDCSessionLifetime)
 	oidcMgr = newOIDCManager(isShared)
 	oauth2Mgr = newOAuth2Manager(isShared)
 	webTaskMgr = newWebTaskManager(isShared)

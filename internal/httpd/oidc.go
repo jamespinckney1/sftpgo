@@ -233,6 +233,8 @@ type oidcToken struct {
 	CustomFields               *map[string]any `json:"custom_fields,omitempty"`
 	Cookie                     string          `json:"cookie"`
 	UsedAt                     int64           `json:"used_at"`
+	// LoginAt is when the user signed in, used for oidc_session_lifetime
+	LoginAt int64 `json:"login_at,omitempty"`
 }
 
 func (t *oidcToken) parseClaims(claims map[string]any, usernameField, roleField string, customFields []string,
@@ -312,6 +314,50 @@ func (t *oidcToken) isExpired() bool {
 		return false
 	}
 	return t.ExpiresAt < util.GetTimeAsMsSinceEpoch(time.Now())
+}
+
+// oidcSessionLifetime is the fork's fixed session lifetime for OIDC logins,
+// in milliseconds. 0 means that the session ends with the identity provider's
+// token, which for Google is one hour unless it can be refreshed.
+var oidcSessionLifetime int64
+
+func setOIDCSessionLifetime(minutes int) {
+	if minutes < 0 || minutes > maxOIDCSessionLifetime {
+		logger.Warn(logSender, "", "invalid oidc_session_lifetime %d, it must be between 0 and %d minutes",
+			minutes, maxOIDCSessionLifetime)
+		minutes = 0
+	}
+	oidcSessionLifetime = int64(minutes) * 60 * 1000
+}
+
+// maxOIDCSessionLifetime is 30 days, in minutes.
+const maxOIDCSessionLifetime = 30 * 24 * 60
+
+// oidcIdleTimeout returns, in milliseconds, how long an unused OIDC session
+// is kept.
+func oidcIdleTimeout() int64 {
+	return max(int64(tokenDeleteInterval), oidcSessionLifetime)
+}
+
+// extendSession keeps the session open after the identity provider's token
+// expired, within oidc_session_lifetime from the login. The SFTPGo user is
+// checked again, and then at most every cookie lifetime.
+func (t *oidcToken) extendSession(r *http.Request) bool {
+	if oidcSessionLifetime <= 0 || t.LoginAt <= 0 {
+		return false
+	}
+	now := util.GetTimeAsMsSinceEpoch(time.Now())
+	end := t.LoginAt + oidcSessionLifetime
+	if now >= end {
+		return false
+	}
+	if err := t.refreshUser(r); err != nil {
+		logger.Debug(logSender, "", "unable to extend the oidc session for cookie %q: %v", t.Cookie, err)
+		return false
+	}
+	t.ExpiresAt = min(now+cookieTokenDuration.Milliseconds(), end)
+	oidcMgr.addToken(*t)
+	return true
 }
 
 func (t *oidcToken) refresh(ctx context.Context, config OAuth2Config, verifier OIDCTokenVerifier, r *http.Request) error {
@@ -512,7 +558,8 @@ func (s *httpdServer) validateOIDCToken(w http.ResponseWriter, r *http.Request, 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		if err = token.refresh(ctx, s.binding.OIDC.oauth2Config, s.binding.OIDC.getVerifier(ctx), r); err != nil {
+		err = token.refresh(ctx, s.binding.OIDC.oauth2Config, s.binding.OIDC.getVerifier(ctx), r)
+		if err != nil && !token.extendSession(r) {
 			setFlashMessage(w, r, newFlashMessage("Your OpenID token is expired, please log-in again", util.I18nOIDCTokenExpired))
 			doRedirect()
 			return oidcToken{}, errInvalidToken
@@ -717,6 +764,7 @@ func (s *httpdServer) handleOIDCRedirect(w http.ResponseWriter, r *http.Request)
 		IDToken:      rawIDToken,
 		Nonce:        idToken.Nonce,
 		Cookie:       util.GenerateOpaqueString(),
+		LoginAt:      util.GetTimeAsMsSinceEpoch(time.Now()),
 	}
 	if !oauth2Token.Expiry.IsZero() {
 		token.ExpiresAt = util.GetTimeAsMsSinceEpoch(oauth2Token.Expiry)
@@ -777,7 +825,12 @@ func loginOIDCUser(w http.ResponseWriter, r *http.Request, token oidcToken, next
 		SameSite: http.SameSiteLaxMode,
 	}
 	// we don't set a cookie expiration so we can refresh the token without setting a new cookie
-	// the cookie will be invalidated on browser close
+	// the cookie will be invalidated on browser close.
+	// Fork: with a fixed session lifetime the cookie lasts as long as the
+	// session, so closing the browser does not log out.
+	if oidcSessionLifetime > 0 {
+		cookie.MaxAge = int(oidcSessionLifetime / 1000)
+	}
 	http.SetCookie(w, &cookie)
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 	if token.isAdmin() {

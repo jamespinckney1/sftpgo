@@ -413,6 +413,7 @@ func Init() {
 			SigningPassphraseFile: "",
 			TokenValidation:       0,
 			CookieLifetime:        20,
+			OIDCSessionLifetime:   0,
 			ShareCookieLifetime:   120,
 			JWTLifetime:           20,
 			MaxUploadFileSize:     0,
@@ -2217,6 +2218,7 @@ func setViperDefaults() {
 	viper.SetDefault("httpd.signing_passphrase_file", globalConf.HTTPDConfig.SigningPassphraseFile)
 	viper.SetDefault("httpd.token_validation", globalConf.HTTPDConfig.TokenValidation)
 	viper.SetDefault("httpd.cookie_lifetime", globalConf.HTTPDConfig.CookieLifetime)
+	viper.SetDefault("httpd.oidc_session_lifetime", globalConf.HTTPDConfig.OIDCSessionLifetime)
 	viper.SetDefault("httpd.share_cookie_lifetime", globalConf.HTTPDConfig.ShareCookieLifetime)
 	viper.SetDefault("httpd.jwt_lifetime", globalConf.HTTPDConfig.JWTLifetime)
 	viper.SetDefault("httpd.max_upload_file_size", globalConf.HTTPDConfig.MaxUploadFileSize)

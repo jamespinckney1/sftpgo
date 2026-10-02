@@ -1,6 +1,6 @@
 # WebClient enhancements (fork)
 
-This fork adds eight **additive, backward-compatible** features to the end-user
+This fork adds nine **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
 crypto, or the virtual-filesystem sandbox is changed; the features live in the
 web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
@@ -435,6 +435,28 @@ the end of the list.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `clip_model` | `"ViT-B-32__openai"` | CLIP model name as known by the Immich machine-learning container. Empty disables "things pictured". Needs `ml_url`. After a change, every photo is analyzed again automatically. |
+
+## 9. Longer sign-in sessions with OpenID Connect (Google)
+
+Upstream, a WebClient/WebAdmin session started with OpenID Connect ends when
+the identity provider's token expires, unless the provider issues refresh
+tokens. Google's tokens last one hour and are not refreshed, so users are
+logged out at least every hour. Sessions are also lost when the browser is
+closed and when SFTPGo restarts.
+
+With `oidc_session_lifetime` (minutes, `httpd` section) set, a session lasts
+that long after signing in, whatever the provider's token:
+
+- the SFTPGo user is checked again every `cookie_lifetime` minutes: a
+  deleted or disabled user, or one no longer allowed to use HTTP, is logged
+  out;
+- the session cookie lasts as long as the session, so closing the browser
+  does not log out;
+- with a SQLite, MySQL, PostgreSQL or CockroachDB data provider, sessions are
+  stored there and survive SFTPGo restarts.
+
+`0` (default) keeps the upstream behavior; the maximum is 43200 (30 days).
+Example: `SFTPGO_HTTPD__OIDC_SESSION_LIFETIME=720` (12 hours).
 
 ## Roadmap
 
