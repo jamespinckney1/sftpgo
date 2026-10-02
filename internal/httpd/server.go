@@ -1650,17 +1650,17 @@ func (s *httpdServer) setupWebClientRoutes() {
 				Get(webClientPhotoStatusPath, s.handleClientPhotoIndexStatus)
 			router.With(s.checkAuthRequirements, s.refreshCookie).
 				Get(webClientPeoplePath, s.handleClientPeoplePage)
-			router.With(s.checkAuthRequirements).
+			router.With(s.checkAuthRequirements, s.refreshCookie).
 				Get(webClientPeoplePath+"/list", s.handleClientPeopleList)
-			router.With(s.checkAuthRequirements).
+			router.With(s.checkAuthRequirements, s.refreshCookie).
 				Get(webClientPeoplePath+"/faces", s.handleClientPersonFaces)
 			router.With(s.checkAuthRequirements).
 				Get(webClientPeoplePath+"/face", s.handleClientFaceCrop)
-			router.With(s.checkAuthRequirements, s.verifyCSRFHeader).
+			router.With(s.checkAuthRequirements, s.verifyCSRFHeader, s.refreshCookie).
 				Post(webClientPeoplePath+"/action", s.handleClientPeopleAction)
 			router.With(s.checkAuthRequirements, s.refreshCookie).
 				Get(webClientPlacesPath, s.handleClientPlacesPage)
-			router.With(s.checkAuthRequirements, compressor.Handler).
+			router.With(s.checkAuthRequirements, compressor.Handler, s.refreshCookie).
 				Get(webClientPlacesPath+"/points", s.handleClientPlacesPoints)
 			router.With(s.checkAuthRequirements, s.checkHTTPUserPerm(sdk.WebClientWriteDisabled), s.verifyCSRFHeader).
 				Post(webClientDirsPath, createUserDir)

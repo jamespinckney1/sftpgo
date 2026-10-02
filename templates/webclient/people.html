@@ -171,10 +171,30 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
         }
 
+        // An expired session answers with the login page instead of JSON:
+        // reload to go through the login.
+        function checkJSON(resp) {
+            if (!resp.data || typeof resp.data !== 'object') {
+                window.location.reload();
+                throw { sessionExpired: true };
+            }
+            return resp;
+        }
+
         function showError(err) {
-            let msg = "general.error";
-            if (err && err.response && err.response.status == 404) {
+            if (err && err.sessionExpired) {
+                return;
+            }
+            let status = err && err.response ? err.response.status : 0;
+            if (status == 401) {
+                window.location.reload();
+                return;
+            }
+            let msg = "general.error500";
+            if (status == 404) {
                 msg = "people.not_found";
+            } else if ([400, 403, 429].includes(status)) {
+                msg = "general.error" + status;
             }
             showToast(0, msg);
         }
@@ -223,7 +243,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         function loadList() {
             let all = $('#people_show_all').is(':checked') ? '1' : '0';
             $('#people_loader').removeClass('d-none');
-            return axios.get(LIST_URL + '?all=' + all, { timeout: 60000 }).then(function (resp) {
+            return axios.get(LIST_URL + '?all=' + all, { timeout: 60000 }).then(checkJSON).then(function (resp) {
                 people = resp.data.people || [];
                 names = resp.data.names || [];
                 $('#people_names').html(names.map(n => `<option value="${attr(n)}"></option>`).join(""));
@@ -256,7 +276,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             $('#people_list_view').addClass('d-none');
             $('#person_view').removeClass('d-none');
             history.replaceState(null, '', window.location.pathname + '?person=' + id);
-            return axios.get(FACES_URL + '?id=' + id, { timeout: 60000 }).then(function (resp) {
+            return axios.get(FACES_URL + '?id=' + id, { timeout: 60000 }).then(checkJSON).then(function (resp) {
                 current = resp.data.person;
                 let title = current.name || $.t('people.unnamed');
                 $('#person_title').text(title);
@@ -284,7 +304,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             return axios.post(ACTION_URL, payload, {
                 timeout: 60000,
                 headers: { 'X-CSRF-TOKEN': '{{.CSRFToken}}' }
-            }).finally(function () {
+            }).then(checkJSON).finally(function () {
                 KTApp.hidePageLoading();
             });
         }

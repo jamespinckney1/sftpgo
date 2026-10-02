@@ -67,6 +67,9 @@ type Manager struct {
 	prioQueue     chan string
 	backfillQueue chan string
 	events        chan fsEvent
+	evMu          sync.Mutex
+	evOverflow    []fsEvent // events received while events was full, in order
+	evKick        chan struct{}
 	rescanCh      chan struct{}
 	dupCh         chan struct{}
 	faceCh        chan struct{}
@@ -161,6 +164,7 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 		prioQueue:     make(chan string, priorityQueueSize),
 		backfillQueue: make(chan string, backfillQueueSize),
 		events:        make(chan fsEvent, eventQueueSize),
+		evKick:        make(chan struct{}, 1),
 		rescanCh:      make(chan struct{}, 1),
 		dupCh:         make(chan struct{}, 1),
 		faceCh:        make(chan struct{}, 1),
@@ -382,12 +386,26 @@ func (m *Manager) scan() {
 	start := time.Now()
 	roots := m.refreshRoots()
 	logger.Info(logSender, "", "photo index scan started, directories: %v", roots)
+	// Walk every root first and remove the deleted files right away: the new
+	// and changed files are processed afterwards, which can take days on the
+	// first pass.
+	var todo []string
 	for _, root := range roots {
-		if !m.scanRoot(root) {
+		files, ok := m.scanRoot(root)
+		if !ok {
+			return
+		}
+		todo = append(todo, files...)
+	}
+	m.removeOrphans(roots)
+	m.scanQueued.Store(int64(len(todo)))
+	for _, p := range todo {
+		select {
+		case m.backfillQueue <- p:
+		case <-m.stop:
 			return
 		}
 	}
-	m.removeOrphans(roots)
 	m.kickDuplicates()
 	if m.ml != nil {
 		// Drop the faces of deleted photos from the groups.
@@ -400,53 +418,58 @@ func (m *Manager) scan() {
 		time.Since(start).Round(time.Second), m.scanQueued.Load())
 }
 
-func (m *Manager) scanRoot(root string) bool {
+// scanRoot walks root, removes from the index the files that no longer exist
+// and returns the new and changed files. It returns false if the manager is
+// stopping.
+func (m *Manager) scanRoot(root string) ([]string, bool) {
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		// The disk may be unmounted: never treat this as "everything was deleted".
 		logger.Warn(logSender, "", "skipping directory %q, not accessible: %v", root, err)
-		return true
+		return nil, true
 	}
 	known, err := m.store.signatures(root)
 	if err != nil {
 		logger.Error(logSender, "", "unable to read the index for %q: %v", root, err)
-		return true
+		return nil, true
 	}
 	res := m.walkRoot(root, known)
 	if res.stopped {
-		return false
+		return nil, false
 	}
-	if res.err != nil || res.errors > 0 {
-		logger.Warn(logSender, "", "scan of %q had %d errors, stale entries are kept: %v", root, res.errors, res.err)
-		return true
+	if len(res.unreadable) > 0 {
+		logger.Warn(logSender, "", "scan of %q: %d entries could not be read, the files indexed below them are kept: %v",
+			root, len(res.unreadable), res.unreadable[:min(len(res.unreadable), 5)])
 	}
 	if len(res.seen) == 0 && len(known) > 0 {
 		logger.Warn(logSender, "", "scan of %q found no files but %d are indexed, stale entries are kept",
 			root, len(known))
-		return true
+		return res.todo, true
 	}
-	m.pruneDeleted(root, known, res.seen)
-	return true
+	m.pruneDeleted(root, known, res)
+	return res.todo, true
 }
 
 type walkResult struct {
-	seen    map[string]bool
-	errors  int
-	stopped bool
-	err     error
+	seen map[string]bool
+	todo []string
+	// unreadable are the entries that could not be read: what is indexed
+	// below them is kept.
+	unreadable []string
+	stopped    bool
 }
 
-// walkRoot walks root, queueing the new and changed media files for
-// processing, and returns the media files found.
+// walkRoot walks root and returns the media files found and the new and
+// changed ones.
 func (m *Manager) walkRoot(root string, known map[string]fileSig) walkResult {
 	res := walkResult{seen: make(map[string]bool, len(known))}
-	res.err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if m.stopping() {
 			res.stopped = true
 			return filepath.SkipAll
 		}
 		if err != nil {
-			res.errors++
+			res.unreadable = append(res.unreadable, p)
 			logger.Debug(logSender, "", "scan: unable to read %q: %v", p, err)
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
@@ -463,18 +486,14 @@ func (m *Manager) walkRoot(root string, known map[string]fileSig) walkResult {
 			return nil
 		}
 		res.seen[p] = true
-		if !changedSince(d, known[p]) {
-			return nil
+		if changedSince(d, known[p]) {
+			res.todo = append(res.todo, p)
 		}
-		m.scanQueued.Add(1)
-		select {
-		case m.backfillQueue <- p:
-			return nil
-		case <-m.stop:
-			res.stopped = true
-			return filepath.SkipAll
-		}
+		return nil
 	})
+	if err != nil {
+		res.unreadable = append(res.unreadable, root)
+	}
 	return res
 }
 
@@ -489,13 +508,14 @@ func changedSince(d fs.DirEntry, sig fileSig) bool {
 }
 
 // pruneDeleted removes from the index the files under root that were not
-// found by the last walk.
-func (m *Manager) pruneDeleted(root string, known map[string]fileSig, seen map[string]bool) {
+// found by the last walk, except those below an entry that could not be read.
+func (m *Manager) pruneDeleted(root string, known map[string]fileSig, res walkResult) {
 	var removed []int64
 	for p, sig := range known {
-		if !seen[p] {
-			removed = append(removed, sig.id)
+		if res.seen[p] || slices.ContainsFunc(res.unreadable, func(u string) bool { return isInside(p, u) }) {
+			continue
 		}
+		removed = append(removed, sig.id)
 	}
 	if len(removed) == 0 {
 		return
@@ -716,16 +736,28 @@ func (m *Manager) removeTree(fsPath string) error {
 }
 
 // OnFsEvent is called for every successful filesystem operation done through
-// SFTPGo, with the real filesystem paths. It never blocks: if the event queue
-// is full the event is dropped and the next scan catches up.
+// SFTPGo, with the real filesystem paths. It never blocks and never drops an
+// event: when the queue is full, for example while a large folder is being
+// deleted, the events are kept in order in an overflow list.
 func (m *Manager) OnFsEvent(op, fsPath, fsTarget string) {
 	switch op {
 	case OpUpload, OpDelete, OpRmdir, OpRename, OpCopy:
 	default:
 		return
 	}
+	ev := fsEvent{op: op, path: fsPath, target: fsTarget}
+	m.evMu.Lock()
+	defer m.evMu.Unlock()
+	if len(m.evOverflow) == 0 {
+		select {
+		case m.events <- ev:
+			return
+		default:
+		}
+	}
+	m.evOverflow = append(m.evOverflow, ev)
 	select {
-	case m.events <- fsEvent{op: op, path: fsPath, target: fsTarget}:
+	case m.evKick <- struct{}{}:
 	default:
 	}
 }
@@ -735,8 +767,38 @@ func (m *Manager) eventLoop() {
 		select {
 		case ev := <-m.events:
 			m.handleEvent(ev)
+		case <-m.evKick:
+			m.drainEvents()
 		case <-m.stop:
 			return
+		}
+	}
+}
+
+// drainEvents handles the queued events, then the overflow ones, which are
+// newer, until both are empty.
+func (m *Manager) drainEvents() {
+	for {
+		select {
+		case ev := <-m.events:
+			m.handleEvent(ev)
+			continue
+		case <-m.stop:
+			return
+		default:
+		}
+		m.evMu.Lock()
+		batch := m.evOverflow
+		m.evOverflow = nil
+		m.evMu.Unlock()
+		if len(batch) == 0 {
+			return
+		}
+		for _, ev := range batch {
+			if m.stopping() {
+				return
+			}
+			m.handleEvent(ev)
 		}
 	}
 }

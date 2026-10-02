@@ -162,6 +162,11 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             }
 
             axios.get(POINTS_URL, { timeout: 120000 }).then(function (resp) {
+                if (!resp.data || typeof resp.data !== 'object') {
+                    // Expired session: the login page was returned.
+                    window.location.reload();
+                    return;
+                }
                 let points = resp.data.points || [];
                 let files = resp.data.files || [];
                 places = resp.data.places || [];
@@ -186,8 +191,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     cluster.addLayers(markers);
                     map.addLayer(cluster);
                 });
-            }).catch(function () {
-                showToast(0, 'general.error');
+            }).catch(function (err) {
+                if (err && err.response && err.response.status == 401) {
+                    window.location.reload();
+                    return;
+                }
+                showToast(0, 'general.error500');
             });
 
             $('#places_filter').on('input', renderPlaces);

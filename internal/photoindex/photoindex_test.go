@@ -15,6 +15,7 @@
 package photoindex
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -312,22 +313,12 @@ func TestIndexerLifecycle(t *testing.T) {
 	m := newTestManager(t, root, Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"})
 	m.refreshRoots()
 
-	// Scan in the background (the backfill queue is bounded) and drain.
-	done := make(chan struct{})
-	go func() {
-		m.scanRoot(root)
-		close(done)
-	}()
-	for {
-		select {
-		case p := <-m.backfillQueue:
-			require.NoError(t, m.processFile(p))
-			continue
-		case <-done:
-		}
-		break
+	todo, ok := m.scanRoot(root)
+	require.True(t, ok)
+	assert.Len(t, todo, 3, "hidden directories and other files are skipped")
+	for _, p := range todo {
+		require.NoError(t, m.processFile(p))
 	}
-	drain(t, m)
 
 	st := m.Status()
 	assert.Equal(t, int64(3), st.Total)
@@ -374,12 +365,29 @@ func TestIndexerLifecycle(t *testing.T) {
 
 	// A file deleted outside SFTPGo is removed by the next scan.
 	require.NoError(t, os.Remove(filepath.Join(root, "misc", "nodate.jpg")))
-	assert.True(t, m.scanRoot(root))
+	todo, ok = m.scanRoot(root)
+	assert.True(t, ok)
+	assert.Empty(t, todo)
+	assert.Equal(t, int64(2), m.Status().Total)
+
+	// Files below an entry that could not be read are kept, the others are
+	// removed.
+	known, err := m.store.signatures(root)
+	require.NoError(t, err)
+	m.pruneDeleted(root, known, walkResult{seen: map[string]bool{}, unreadable: []string{filepath.Join(root, "old")}})
+	res = searchAll(t, m, []string{root}, "taken:any")
+	require.Len(t, res, 1)
+	assert.Equal(t, filepath.Join(root, "old", "IMG_20190501_101010.jpg"), res[0].Path)
+	writeJPEG(t, filepath.Join(root, "2023", "IMG_20230614_120000.jpg"))
+	todo, _ = m.scanRoot(root)
+	require.Len(t, todo, 1)
+	require.NoError(t, m.processFile(todo[0]))
 	assert.Equal(t, int64(2), m.Status().Total)
 
 	// An unreachable root (unmounted disk) keeps its entries.
 	require.NoError(t, os.Rename(root, root+".moved"))
-	assert.True(t, m.scanRoot(root))
+	_, ok = m.scanRoot(root)
+	assert.True(t, ok)
 	assert.Equal(t, int64(2), m.Status().Total)
 	require.NoError(t, os.Rename(root+".moved", root))
 
@@ -459,4 +467,31 @@ func TestIndexerWithTools(t *testing.T) {
 	p, _ = m.PreviewPath(jpg, info.ModTime(), info.Size())
 	require.NoError(t, m.removeTree(jpg))
 	assert.NoFileExists(t, p)
+}
+
+func TestEventOverflow(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "photos")
+	keep := filepath.Join(root, "IMG_20230614_120000.jpg")
+	gone := filepath.Join(root, "big", "IMG_20220101_000000.jpg")
+	writeJPEG(t, keep)
+	writeJPEG(t, gone)
+	m := newTestManager(t, root, Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"})
+	m.refreshRoots()
+	todo, _ := m.scanRoot(root)
+	for _, p := range todo {
+		require.NoError(t, m.processFile(p))
+	}
+	require.Equal(t, int64(2), m.Status().Total)
+
+	// A large delete fills the queue: the last events, including the folder
+	// itself, must not be lost.
+	for i := range eventQueueSize + 10 {
+		m.OnFsEvent(OpDelete, filepath.Join(root, "big", fmt.Sprintf("other%d.jpg", i)), "")
+	}
+	m.OnFsEvent(OpRmdir, filepath.Join(root, "big"), "")
+	assert.Len(t, m.evOverflow, 11)
+	m.drainEvents()
+	assert.Empty(t, m.evOverflow)
+	assert.Empty(t, m.events)
+	assert.Equal(t, int64(1), m.Status().Total)
 }
