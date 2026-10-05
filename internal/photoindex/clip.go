@@ -133,21 +133,20 @@ func (m *Manager) loadClip() error {
 // face model change is left to the administrator.
 func (m *Manager) checkModels() error {
 	if m.clipOn {
-		prev, err := m.store.setting("clip_model")
-		if err != nil {
+		if err := m.resetOnModelChange("clip_model", m.cfg.ClipModel, "CLIP",
+			`UPDATE media SET clip = NULL, clip_state = 0 WHERE clip_state <> 0`); err != nil {
 			return err
 		}
-		if prev != m.cfg.ClipModel {
-			if prev != "" {
-				logger.Info(logSender, "", "CLIP model changed from %q to %q, every photo will be analyzed again",
-					prev, m.cfg.ClipModel)
-				if _, err := m.store.db.Exec(`UPDATE media SET clip = NULL, clip_state = 0 WHERE clip_state <> 0`); err != nil {
-					return err
-				}
-			}
-			if err := m.store.setSetting("clip_model", m.cfg.ClipModel); err != nil {
-				return err
-			}
+	}
+	if m.ocrOn.Load() {
+		if err := m.resetOnModelChange("ocr_model", m.cfg.OCRModel, "OCR",
+			`UPDATE media SET ocr_text = '', ocr_search = '', ocr_state = 0 WHERE ocr_state <> 0`); err != nil {
+			return err
+		}
+		// Retry the photos that failed, a few if the service was too old to
+		// read text and was upgraded since.
+		if _, err := m.store.db.Exec(`UPDATE media SET ocr_state = 0 WHERE ocr_state = ?`, facesFailed); err != nil {
+			return err
 		}
 	}
 	if m.facesOn {
@@ -165,6 +164,23 @@ func (m *Manager) checkModels() error {
 		}
 	}
 	return nil
+}
+
+// resetOnModelChange records the model used for an analysis and, if it
+// changed, runs reset so that every photo is analyzed again.
+func (m *Manager) resetOnModelChange(key, model, label, reset string) error {
+	prev, err := m.store.setting(key)
+	if err != nil || prev == model {
+		return err
+	}
+	if prev != "" {
+		logger.Info(logSender, "", "%s model changed from %q to %q, every photo will be analyzed again",
+			label, prev, model)
+		if _, err := m.store.db.Exec(reset); err != nil {
+			return err
+		}
+	}
+	return m.store.setSetting(key, model)
 }
 
 // textEmbedding returns the CLIP embedding of a search text, cached.

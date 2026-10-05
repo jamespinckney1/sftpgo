@@ -1,6 +1,6 @@
 # WebClient enhancements (fork)
 
-This fork adds nine **additive, backward-compatible** features to the end-user
+This fork adds ten **additive, backward-compatible** features to the end-user
 WebClient file browser. Nothing in the SFTP/FTP/WebDAV protocols, authentication,
 crypto, or the virtual-filesystem sandbox is changed; the features live in the
 web/HTTP layer (plus an opt-in background photo indexer) and reuse the existing
@@ -329,7 +329,7 @@ and point SFTPGo at it:
 ```
 
 Check the setup with one photo before restarting SFTPGo (the first run
-downloads the models; it checks "things pictured", section 8, too):
+downloads the models; it checks "things pictured" and "visible text", sections 8 and 9, too):
 
 ```sh
 docker exec sftpgo sftpgo photoindex-facecheck --file /srv/fileshare/some/photo.jpg
@@ -436,7 +436,44 @@ the end of the list.
 | --- | --- | --- |
 | `clip_model` | `"ViT-B-32__openai"` | CLIP model name as known by the Immich machine-learning container. Empty disables "things pictured". Needs `ml_url`. After a change, every photo is analyzed again automatically. |
 
-## 9. Longer sign-in sessions with OpenID Connect (Google)
+## 9. Visible text: search the text in photos
+
+Find photos by the text visible in them: signs, posters, documents and
+receipts, screenshots, shirts, cakes...
+
+| Query | Finds |
+| --- | --- |
+| `text:menu` | photos showing the word "menu" (any case, also inside longer words) |
+| `text:"open house"` | words in that order, on the same line |
+| `text:happy text:birthday` | photos showing both, anywhere |
+| `text:receipt taken:2023` | combined with any other filter |
+
+`says:` works too. Results show, under the date, the line of text that
+matched.
+
+### How it works
+
+- The text is read by the OCR model of the same Immich machine-learning
+  container as faces and things pictured (`PP-OCRv5_mobile` by default, about
+  20 MB, downloaded on first use), in the same single request per photo.
+  Photos indexed before are read in the background.
+- The photo's 1024-pixel preview is read, so large text (signs, titles,
+  screenshots) is found well; small print in a big photo may not be.
+- The text is stored in the index (usually a few bytes per photo) and
+  searched there; nothing is sent anywhere else.
+- If the container is too old to read text, text reading turns itself off
+  after a few photos, with a warning in the log, and faces and things
+  pictured go on; `text:` searches then report it. After upgrading the
+  container, restart SFTPGo.
+- `sftpgo photoindex-facecheck` prints the text read in the test photo.
+
+### Configuration (`httpd.photo_index`)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ocr_model` | `"PP-OCRv5_mobile"` | OCR model name as known by the Immich machine-learning container, e.g. `EN__PP-OCRv5_mobile` for English only. Empty disables visible text. Needs `ml_url`. After a change, every photo is read again. |
+
+## 10. Longer sign-in sessions with OpenID Connect (Google)
 
 Upstream, a WebClient/WebAdmin session started with OpenID Connect ends when
 the identity provider's token expires, unless the provider issues refresh
@@ -464,8 +501,8 @@ Planned, not built yet:
 
 - **Faces in videos**: sample frames from each video (with ffmpeg), find the
   faces and add the video to the people found.
-- **Things pictured in videos**: the same frame sampling for `show:`, a video
-  ranking by its best-matching frame.
+- **Things pictured and visible text in videos**: the same frame sampling for
+  `show:` and `text:`, a video ranking by its best-matching frame.
 - **Timeline view**: browse every photo by year and month, newest first, in a
   scrolling grid with a date scrubber, with the same filters as search.
 

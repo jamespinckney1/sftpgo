@@ -256,18 +256,20 @@ type mlTodo struct {
 	Media
 	faces bool
 	clip  bool
+	ocr   bool
 }
 
 // mlPendingCondition selects the photos with pending work. Photos are read
 // through their preview; when previews are disabled, the originals are used.
 func (m *Manager) mlPendingCondition() (string, []any) {
-	return `kind != ? AND (has_preview = 1 OR ?) AND ((? AND faces_state = 0) OR (? AND clip_state = 0))`,
-		[]any{KindVideo, m.previewDisabled, m.facesOn, m.clipOn}
+	return `kind != ? AND (has_preview = 1 OR ?) AND ((? AND faces_state = 0) OR (? AND clip_state = 0)
+		OR (? AND ocr_state = 0))`,
+		[]any{KindVideo, m.previewDisabled, m.facesOn, m.clipOn, m.ocrOn.Load()}
 }
 
 func (m *Manager) mlCandidates(limit int) ([]mlTodo, error) {
 	cond, args := m.mlPendingCondition()
-	rows, err := m.store.db.Query(`SELECT `+mediaColumns+`, faces_state, clip_state FROM media WHERE `+cond+
+	rows, err := m.store.db.Query(`SELECT `+mediaColumns+`, faces_state, clip_state, ocr_state FROM media WHERE `+cond+
 		` ORDER BY id LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -278,15 +280,16 @@ func (m *Manager) mlCandidates(limit int) ([]mlTodo, error) {
 		var t mlTodo
 		var lat, lon sql.NullFloat64
 		var phash sql.NullInt64
-		var facesState, clipState int
+		var facesState, clipState, ocrState int
 		err := rows.Scan(&t.ID, &t.Path, &t.Size, &t.ModTime, &t.Kind, &t.Taken, &t.TakenSrc, &t.TZOffset,
 			&t.Width, &t.Height, &lat, &lon, &t.Camera, &t.HasPreview, &t.Error, &t.IndexedAt, &t.Hash, &phash,
-			&t.City, &t.State, &t.Country, &facesState, &clipState)
+			&t.City, &t.State, &t.Country, &facesState, &clipState, &ocrState)
 		if err != nil {
 			return nil, err
 		}
 		t.faces = m.facesOn && facesState == facesTodo
 		t.clip = m.clipOn && clipState == facesTodo
+		t.ocr = m.ocrOn.Load() && ocrState == facesTodo
 		res = append(res, t)
 	}
 	return res, rows.Err()
@@ -330,7 +333,46 @@ func (m *Manager) markAnalysisFailed(t *mlTodo) error {
 			return err
 		}
 	}
+	if t.ocr {
+		return m.markOCRFailed(t)
+	}
 	return nil
+}
+
+func (m *Manager) markOCRFailed(t *mlTodo) error {
+	_, err := m.store.db.Exec(`UPDATE media SET ocr_state = ? WHERE id = ? AND size = ? AND mtime = ?`,
+		facesFailed, t.ID, t.Size, t.ModTime)
+	return err
+}
+
+// analyze asks the service for the pending analyses of a photo. If the
+// analysis fails only because of the text reading, the other results are
+// returned and the text is marked as failed.
+func (m *Manager) analyze(t *mlTodo, data []byte) (MLResult, error) {
+	t.ocr = t.ocr && m.ocrOn.Load() // it may have been turned off meanwhile
+	tasks := mlTasks{faces: t.faces, clip: t.clip, ocr: t.ocr}
+	res, err := m.ml.analyze(context.Background(), data, tasks)
+	if err == nil {
+		if t.ocr {
+			m.ocrFailures.Store(0)
+		}
+		return res, nil
+	}
+	if !t.ocr || errors.Is(err, errMLUnavailable) {
+		return res, err
+	}
+	m.ocrFailed(err)
+	if !t.faces && !t.clip {
+		return res, err
+	}
+	tasks.ocr = false
+	res, retryErr := m.ml.analyze(context.Background(), data, tasks)
+	if retryErr != nil {
+		return res, retryErr
+	}
+	logger.Debug(logSender, "", "reading the text failed for %q: %v", t.Path, err)
+	t.ocr = false
+	return res, m.markOCRFailed(t)
 }
 
 // analyzePhoto asks the service for the pending analyses of a photo and
@@ -340,9 +382,14 @@ func (m *Manager) analyzePhoto(t *mlTodo) error {
 	if err != nil {
 		return err
 	}
-	res, err := m.ml.analyze(context.Background(), data, t.faces, t.clip)
+	res, err := m.analyze(t, data)
 	if err != nil {
 		return err
+	}
+	if t.ocr {
+		if err := m.storeOCR(&t.Media, res.Text); err != nil {
+			return err
+		}
 	}
 	if t.clip {
 		if err := m.storeClip(&t.Media, res.Clip); err != nil {
@@ -865,6 +912,7 @@ func (m *Manager) resolvePeople(term string) ([]int64, error) {
 type FaceStatus struct {
 	Enabled    bool  `json:"enabled"`
 	Clip       bool  `json:"clip"`
+	Text       bool  `json:"text"`
 	Pending    int64 `json:"pending"`
 	Faces      int64 `json:"faces"`
 	Named      int64 `json:"named"`
@@ -872,7 +920,7 @@ type FaceStatus struct {
 }
 
 func (m *Manager) faceStatus() FaceStatus {
-	st := FaceStatus{Enabled: m.facesOn, Clip: m.clipOn, ServiceOff: m.mlDown.Load()}
+	st := FaceStatus{Enabled: m.facesOn, Clip: m.clipOn, Text: m.ocrOn.Load(), ServiceOff: m.mlDown.Load()}
 	if m.ml == nil {
 		return st
 	}
@@ -896,7 +944,7 @@ func (m *Manager) ClipEnabled() bool {
 // CheckFaces sends one image to the face recognition service and returns the
 // result, to verify the setup.
 func CheckFaces(ctx context.Context, url, model string, minScore float64, jpeg []byte) (MLResult, error) {
-	c := newMLClient(url, model, "", minScore)
+	c := newMLClient(url, Config{FaceModel: model, FaceMinScore: minScore})
 	if err := c.ping(ctx); err != nil {
 		return MLResult{}, err
 	}
@@ -907,11 +955,11 @@ func CheckFaces(ctx context.Context, url, model string, minScore float64, jpeg [
 // machine-learning service and returns the similarity of each description
 // with the image, to verify the setup.
 func CheckClip(ctx context.Context, url, model string, jpeg []byte, texts []string) ([]float32, error) {
-	c := newMLClient(url, "", model, 0)
+	c := newMLClient(url, Config{ClipModel: model})
 	if err := c.ping(ctx); err != nil {
 		return nil, err
 	}
-	res, err := c.analyze(ctx, jpeg, false, true)
+	res, err := c.analyze(ctx, jpeg, mlTasks{clip: true})
 	if err != nil {
 		return nil, err
 	}

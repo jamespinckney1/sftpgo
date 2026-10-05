@@ -88,6 +88,10 @@ type Config struct {
 	// (show:). Default "ViT-B-32__openai"; empty disables it. Changing it
 	// requires analyzing every photo again.
 	ClipModel string `json:"clip_model" mapstructure:"clip_model"`
+	// OCRModel is the text recognition model used for the "visible text"
+	// search (text:). Default "PP-OCRv5_mobile"; empty disables it. Changing
+	// it analyzes every photo again.
+	OCRModel string `json:"ocr_model" mapstructure:"ocr_model"`
 	// FaceMinScore is the minimum detection confidence, 0..1, for a face to be
 	// kept. Default 0.7.
 	FaceMinScore float64 `json:"face_min_score" mapstructure:"face_min_score"`
@@ -114,6 +118,7 @@ func DefaultConfig() Config {
 		MapTileURL:         "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 		FaceModel:          "buffalo_l",
 		ClipModel:          "ViT-B-32__openai",
+		OCRModel:           "PP-OCRv5_mobile",
 		FaceMinScore:       0.7,
 		FaceMatchThreshold: 0.5,
 	}

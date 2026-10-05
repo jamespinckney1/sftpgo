@@ -39,6 +39,7 @@ const (
 	i18nPhotoQueryInvalid = "fs.search.photo_query_invalid"
 	i18nPhotoIndexOff     = "fs.search.photo_index_disabled"
 	i18nShowUnavailable   = "fs.search.show_unavailable"
+	i18nTextUnavailable   = "fs.search.text_unavailable"
 	// thumbnailSizePreview is the value of the "size" query parameter asking
 	// the thumbnail endpoint for the large preview, used by the viewer for
 	// formats browsers cannot display (HEIC, TIFF, RAW).
@@ -101,6 +102,10 @@ func searchPhotoIndex(w http.ResponseWriter, r *http.Request, connection *Connec
 		sendAPIResponse(w, r, err, i18nShowUnavailable, http.StatusBadRequest)
 		return
 	}
+	if errors.Is(err, photoindex.ErrTextUnavailable) {
+		sendAPIResponse(w, r, err, i18nTextUnavailable, http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		connection.Log(logger.LevelError, "photo search for %q under %q failed: %v", q.Text, startDir, err)
 		sendAPIResponse(w, r, err, "fs.dir_list.err_generic", http.StatusInternalServerError)
@@ -137,6 +142,9 @@ func photoResultRow(id int, startDir, vPath string, rec *photoindex.Media) map[s
 	}
 	if place := (photoindex.Place{City: rec.City, State: rec.State, Country: rec.Country}).String(); place != "" {
 		res["place"] = place
+	}
+	if rec.MatchedText != "" {
+		res["text"] = rec.MatchedText
 	}
 	return res
 }

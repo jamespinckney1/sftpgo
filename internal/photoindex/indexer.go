@@ -76,6 +76,8 @@ type Manager struct {
 	ml            *mlClient
 	facesOn       bool
 	clipOn        bool
+	ocrOn         atomic.Bool // turned off if the service cannot read text
+	ocrFailures   atomic.Int32
 	clip          clipIndex
 	geo           *geocoder
 	faces         *faceEngine
@@ -174,24 +176,14 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 	if m.exiftoolPath != "" {
 		m.exif = newExiftool(m.exiftoolPath)
 	}
-	if dir := findGeonamesDir(cfg.GeonamesDir, configDir); dir != "" {
-		start := time.Now()
-		g, err := loadGeocoder(dir)
-		if err != nil {
-			logger.Warn(logSender, "", "unable to load the place names from %q, places disabled: %v", dir, err)
-		} else {
-			m.geo = g
-			logger.Info(logSender, "", "place names loaded from %q: %s in %s", dir, g, time.Since(start).Round(time.Millisecond))
-		}
-	} else {
-		logger.Info(logSender, "", "no GeoNames data found, photos will not be placed by name")
-	}
-	if cfg.MLURL != "" && (cfg.FaceModel != "" || cfg.ClipModel != "") {
-		m.ml = newMLClient(cfg.MLURL, cfg.FaceModel, cfg.ClipModel, cfg.FaceMinScore)
+	m.loadPlaces(configDir)
+	if cfg.MLURL != "" && (cfg.FaceModel != "" || cfg.ClipModel != "" || cfg.OCRModel != "") {
+		m.ml = newMLClient(cfg.MLURL, cfg)
 		m.facesOn = cfg.FaceModel != ""
 		m.clipOn = cfg.ClipModel != ""
-		logger.Info(logSender, "", "photo analysis enabled, service %q, face model %q, CLIP model %q",
-			cfg.MLURL, cfg.FaceModel, cfg.ClipModel)
+		m.ocrOn.Store(cfg.OCRModel != "")
+		logger.Info(logSender, "", "photo analysis enabled, service %q, face model %q, CLIP model %q, OCR model %q",
+			cfg.MLURL, cfg.FaceModel, cfg.ClipModel, cfg.OCRModel)
 	}
 	if err := m.checkModels(); err != nil {
 		m.store.close() //nolint:errcheck
@@ -207,6 +199,23 @@ func newManager(cfg Config, configDir string, rootsFunc RootsFunc) (*Manager, er
 		logger.Warn(logSender, "", "vipsthumbnail not found: no previews will be generated (no HEIC/RAW thumbnails)")
 	}
 	return m, nil
+}
+
+// loadPlaces loads the place names, if available.
+func (m *Manager) loadPlaces(configDir string) {
+	dir := findGeonamesDir(m.cfg.GeonamesDir, configDir)
+	if dir == "" {
+		logger.Info(logSender, "", "no GeoNames data found, photos will not be placed by name")
+		return
+	}
+	start := time.Now()
+	g, err := loadGeocoder(dir)
+	if err != nil {
+		logger.Warn(logSender, "", "unable to load the place names from %q, places disabled: %v", dir, err)
+		return
+	}
+	m.geo = g
+	logger.Info(logSender, "", "place names loaded from %q: %s in %s", dir, g, time.Since(start).Round(time.Millisecond))
 }
 
 func (m *Manager) start() {
@@ -884,6 +893,12 @@ func (m *Manager) Search(dirs []string, q Query, fn func(Media) bool) error {
 	f, err := m.resolveFilter(q)
 	if err != nil {
 		return err
+	}
+	if len(f.visibleTerms) > 0 {
+		if !m.ocrOn.Load() {
+			return ErrTextUnavailable
+		}
+		fn = m.withMatchedText(f.visibleTerms, fn)
 	}
 	if q.Show != "" {
 		return m.searchShow(dirs, q, f, fn)

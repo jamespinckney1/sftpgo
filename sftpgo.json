@@ -406,6 +406,7 @@
       "ml_url": "",
       "face_model": "buffalo_l",
       "clip_model": "ViT-B-32__openai",
+      "ocr_model": "PP-OCRv5_mobile",
       "face_min_score": 0.7,
       "face_match_threshold": 0.5
     },

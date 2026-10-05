@@ -879,6 +879,11 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                     url: "{{.DirsURL}}?path={{.CurrentDir}}",
                     dataSrc: "",
                     error: function ($xhr, textStatus, errorThrown) {
+                        if (textStatus === "abort") {
+                            // Replaced by a newer request, e.g. a search opened by link
+                            // while the folder was still loading.
+                            return;
+                        }
                         $(".dt-processing").hide();
                         $('#loader').addClass("d-none");
                         let txt = "";
@@ -1047,6 +1052,10 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                     $.t('general.datetime', { val: d, formatParams: { val: { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' } } });
                                 // Where the photo was taken, when known (Places).
                                 let place = row["place"] ? `<div class="text-muted fs-8">${escapeHTML(row["place"])}</div>` : "";
+                                // The text read in the photo that matched a "text:" search.
+                                if (row["text"]) {
+                                    place += `<div class="text-muted fs-8 fst-italic">“${escapeHTML(row["text"])}”</div>`;
+                                }
                                 if (row["taken_src"] == "mtime") {
                                     return `<span class="text-gray-500" title="${attrEscape($.t('fs.search.taken_unknown'))}">${txt} ?</span>${place}`;
                                 }
@@ -1478,7 +1487,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         var searchKind = "name";
 
         function isPhotoQuery(q) {
-            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is|person|who|place|where|show|pictured):/i.test(q);
+            return PHOTO_STATUS_URL !== "" && /(^|\s)(taken|is|person|who|place|where|show|pictured|text|says):/i.test(q);
         }
 
         function getSearchKind(q) {

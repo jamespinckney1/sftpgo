@@ -24,7 +24,7 @@ import (
 
 // schemaVersion is the current version of the index schema. Later phases (CLIP
 // embeddings, faces) add tables through new migrations.
-const schemaVersion = 4
+const schemaVersion = 5
 
 var migrations = []string{
 	// version 1
@@ -98,31 +98,42 @@ var migrations = []string{
 	ALTER TABLE media ADD COLUMN clip BLOB;
 	ALTER TABLE media ADD COLUMN clip_state INTEGER NOT NULL DEFAULT 0;
 	CREATE INDEX media_clip_todo_idx ON media(clip_state) WHERE clip_state = 0;`,
+	// version 5: visible text. ocr_text is the text read in the photo, one
+	// line per text box; ocr_search the same text normalized for search
+	// (lower case, single spaces). ocr_state 0 (to do), 1 (done) or 2
+	// (failed).
+	`ALTER TABLE media ADD COLUMN ocr_text TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN ocr_search TEXT NOT NULL DEFAULT '';
+	ALTER TABLE media ADD COLUMN ocr_state INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX media_ocr_todo_idx ON media(ocr_state) WHERE ocr_state = 0;`,
 }
 
 // Media is an indexed photo or video.
 type Media struct {
-	ID         int64
-	Path       string // absolute filesystem path
-	Size       int64
-	ModTime    int64 // unix nanoseconds
-	Kind       string
-	Taken      string // local wall clock time, takenLayout
-	TakenSrc   string
-	TZOffset   string
-	Width      int
-	Height     int
-	Lat        *float64
-	Lon        *float64
-	Camera     string
-	HasPreview bool
-	Error      string
-	IndexedAt  int64
-	Hash       string // SHA-256 of the content, empty if not computed
-	PHash      *int64 // perceptual hash, nil if not computed
-	City       string
-	State      string
-	Country    string
+	// MatchedText is, in "text:" search results, the line of text read in
+	// the photo that matched.
+	MatchedText string
+	ID          int64
+	Path        string // absolute filesystem path
+	Size        int64
+	ModTime     int64 // unix nanoseconds
+	Kind        string
+	Taken       string // local wall clock time, takenLayout
+	TakenSrc    string
+	TZOffset    string
+	Width       int
+	Height      int
+	Lat         *float64
+	Lon         *float64
+	Camera      string
+	HasPreview  bool
+	Error       string
+	IndexedAt   int64
+	Hash        string // SHA-256 of the content, empty if not computed
+	PHash       *int64 // perceptual hash, nil if not computed
+	City        string
+	State       string
+	Country     string
 	// GeoDone is true if the place was computed from the GPS position.
 	GeoDone bool
 	// Score is the relevance of a "show:" search result.
@@ -282,7 +293,8 @@ func (s *store) upsert(m *Media) (int64, error) {
 		height=excluded.height, lat=excluded.lat, lon=excluded.lon, camera=excluded.camera,
 		has_preview=excluded.has_preview, error=excluded.error, indexed_at=excluded.indexed_at,
 		place_city=excluded.place_city, place_state=excluded.place_state, place_country=excluded.place_country,
-		geo_done=excluded.geo_done, hash='', phash=NULL, phash_tried=0, faces_state=0, clip=NULL, clip_state=0
+		geo_done=excluded.geo_done, hash='', phash=NULL, phash_tried=0, faces_state=0, clip=NULL, clip_state=0,
+		ocr_text='', ocr_search='', ocr_state=0
 		RETURNING id`,
 		m.Path, m.Size, m.ModTime, m.Kind, m.Taken, m.TakenSrc, m.TZOffset, m.Width, m.Height, lat, lon,
 		m.Camera, m.HasPreview, m.Error, m.IndexedAt, m.City, m.State, m.Country, m.GeoDone).Scan(&id)
@@ -411,6 +423,9 @@ type dateFilter struct {
 	onlyPHash   bool   // only files with a perceptual hash
 	// placeTerms: the place (town, state or country) must contain each one.
 	placeTerms []string
+	// visibleTerms: the text read in the photo must contain each one,
+	// normalized with normalizeText.
+	visibleTerms []string
 	// personSets: for each set, the photo must show one of its people.
 	personSets [][]int64
 }
@@ -484,6 +499,9 @@ func (f *dateFilter) where(dirs []string) (string, []any) {
 	for _, t := range f.placeTerms {
 		add(`(instr(lower(place_city), lower(?)) > 0 OR instr(lower(place_state), lower(?)) > 0
 			OR instr(lower(place_country), lower(?)) > 0)`, t, t, t)
+	}
+	for _, t := range f.visibleTerms {
+		add(`instr(ocr_search, ?) > 0`, t)
 	}
 	for _, ids := range f.personSets {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")

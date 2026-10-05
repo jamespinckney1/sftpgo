@@ -32,14 +32,15 @@ var (
 	faceCheckMinScore float64
 	faceCheckClip     string
 	faceCheckTexts    []string
+	faceCheckOCR      string
 
 	photoIndexFaceCheckCmd = &cobra.Command{
 		Use:   "photoindex-facecheck",
 		Short: "Check the machine-learning service with one photo",
 		Long: `Sends one JPEG photo to the machine-learning service (the Immich
 machine-learning container) and prints the faces found and how well some
-descriptions match the photo ("things pictured"), to verify the setup before
-enabling them. The first run downloads the models and can take a few minutes.
+descriptions match the photo ("things pictured") and the text it reads in it
+("visible text"), to verify the setup before enabling them. The first run downloads the models and can take a few minutes.
 
 Usage example:
 
@@ -62,23 +63,44 @@ sftpgo photoindex-facecheck --ml-url http://immich-ml:3003 --file /srv/fileshare
 				fmt.Printf("  face %d: box (%.0f,%.0f)-(%.0f,%.0f), score %.2f, embedding %d values\n",
 					i+1, f.X1, f.Y1, f.X2, f.Y2, f.Score, len(f.Embedding))
 			}
-			if faceCheckClip == "" {
-				return
-			}
-			start = time.Now()
-			scores, err := photoindex.CheckClip(context.Background(), faceCheckURL, faceCheckClip, data, faceCheckTexts)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "things pictured check failed: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("Things pictured OK in %s (higher = better match, 0.19 or more counts as a match in search):\n",
-				time.Since(start).Round(time.Millisecond))
-			for i, t := range faceCheckTexts {
-				fmt.Printf("  %.3f  %s\n", scores[i], t)
-			}
+			checkClip(data)
+			checkOCR(data)
 		},
 	}
 )
+
+func checkClip(data []byte) {
+	if faceCheckClip == "" {
+		return
+	}
+	start := time.Now()
+	scores, err := photoindex.CheckClip(context.Background(), faceCheckURL, faceCheckClip, data, faceCheckTexts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "things pictured check failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Things pictured OK in %s (higher = better match, 0.19 or more counts as a match in search):\n",
+		time.Since(start).Round(time.Millisecond))
+	for i, t := range faceCheckTexts {
+		fmt.Printf("  %.3f  %s\n", scores[i], t)
+	}
+}
+
+func checkOCR(data []byte) {
+	if faceCheckOCR == "" {
+		return
+	}
+	start := time.Now()
+	lines, err := photoindex.CheckOCR(context.Background(), faceCheckURL, faceCheckOCR, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "visible text check failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Visible text OK in %s, %d lines:\n", time.Since(start).Round(time.Millisecond), len(lines))
+	for _, l := range lines {
+		fmt.Printf("  %s\n", l)
+	}
+}
 
 func init() {
 	photoIndexFaceCheckCmd.Flags().StringVar(&faceCheckURL, "ml-url", "http://immich-ml:3003", "URL of the face recognition service")
@@ -89,6 +111,8 @@ func init() {
 		"Model for things pictured, empty to skip that check")
 	photoIndexFaceCheckCmd.Flags().StringArrayVar(&faceCheckTexts, "describe",
 		[]string{"people", "a dog", "a beach", "food", "a car"}, "Descriptions to compare with the photo (repeatable)")
+	photoIndexFaceCheckCmd.Flags().StringVar(&faceCheckOCR, "ocr-model", "PP-OCRv5_mobile",
+		"Model for visible text, empty to skip that check")
 	photoIndexFaceCheckCmd.MarkFlagRequired("file") //nolint:errcheck
 	rootCmd.AddCommand(photoIndexFaceCheckCmd)
 }

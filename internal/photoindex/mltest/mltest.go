@@ -21,7 +21,9 @@
 //     identity's fixed vector;
 //   - its "CLIP" sees colors: an image shows the color names (see Concepts)
 //     of the colors covering at least 1% of it, and a text means the color
-//     names it contains, so "show:red" finds the images with red in them.
+//     names it contains, so "show:red" finds the images with red in them;
+//   - its OCR "reads" a line "<Color> sign" for each of those colors, so
+//     "text:red sign" finds the images with red in them.
 package mltest
 
 import (
@@ -33,6 +35,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -74,6 +77,9 @@ type Server struct {
 	Requests atomic.Int64
 	// Down makes the service answer 503.
 	Down atomic.Bool
+	// NoOCR makes the service reject OCR requests, as versions before OCR
+	// support do.
+	NoOCR atomic.Bool
 }
 
 // NewServer starts a fake machine-learning service.
@@ -107,9 +113,8 @@ func (s *Server) predict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad entries: "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	fr, clip := entries["facial-recognition"], entries["clip"]
-	if (fr == nil && clip == nil) ||
-		(fr != nil && (fr["detection"]["modelName"] == nil || fr["recognition"]["modelName"] == nil)) {
+	fr, clip, ocr := entries["facial-recognition"], entries["clip"], entries["ocr"]
+	if (fr == nil && clip == nil && ocr == nil) || !validPair(fr) || !validPair(ocr) || (ocr != nil && s.NoOCR.Load()) {
 		http.Error(w, "unexpected entries", http.StatusUnprocessableEntity)
 		return
 	}
@@ -117,10 +122,18 @@ func (s *Server) predict(w http.ResponseWriter, r *http.Request) {
 		s.encodeText(w, r, clip)
 		return
 	}
-	s.analyzeImage(w, r, fr != nil, clip)
+	s.analyzeImage(w, r, fr != nil, clip, ocr != nil)
 }
 
-func (s *Server) analyzeImage(w http.ResponseWriter, r *http.Request, faces bool, clip map[string]map[string]any) {
+// validPair checks the detection and recognition models of a task, if
+// requested.
+func validPair(task map[string]map[string]any) bool {
+	return task == nil || (task["detection"]["modelName"] != nil && task["recognition"]["modelName"] != nil)
+}
+
+func (s *Server) analyzeImage(w http.ResponseWriter, r *http.Request, faces bool, clip map[string]map[string]any,
+	ocr bool,
+) {
 	if clip != nil && (clip["visual"] == nil || clip["visual"]["modelName"] == nil) {
 		http.Error(w, "missing model", http.StatusUnprocessableEntity)
 		return
@@ -141,8 +154,16 @@ func (s *Server) analyzeImage(w http.ResponseWriter, r *http.Request, faces bool
 	if faces {
 		resp["facial-recognition"] = findFaces(img)
 	}
+	words := imageWords(img)
 	if clip != nil {
-		resp["clip"] = vectorString(imageConcepts(img))
+		resp["clip"] = vectorString(sumVectors(words))
+	}
+	if ocr {
+		lines := make([]string, 0, len(words))
+		for _, word := range words {
+			lines = append(lines, strings.ToUpper(word[:1])+word[1:]+" sign")
+		}
+		resp["ocr"] = map[string]any{"text": lines, "box": []float64{}, "boxScore": []float64{}, "textScore": []float64{}}
 	}
 	writeJSON(w, resp)
 }
@@ -208,7 +229,9 @@ func textConcepts(text string) []float64 {
 	return sumVectors(words)
 }
 
-func imageConcepts(img image.Image) []float64 {
+// imageWords returns the names of the concept colors covering at least 1% of
+// the image, sorted.
+func imageWords(img image.Image) []string {
 	b := img.Bounds()
 	counts := make(map[string]int)
 	for y := b.Min.Y; y < b.Max.Y; y += 2 {
@@ -228,7 +251,8 @@ func imageConcepts(img image.Image) []float64 {
 			words = append(words, name)
 		}
 	}
-	return sumVectors(words)
+	slices.Sort(words)
+	return words
 }
 
 func vectorString(v []float64) string {

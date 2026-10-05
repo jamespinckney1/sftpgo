@@ -618,7 +618,8 @@ func TestWebClientShowAndPlaces(t *testing.T) {
 		os.ModePerm))
 
 	cfg := photoindex.Config{ExiftoolPath: exiftool, VipsPath: "/nonexistent", GeonamesDir: geoDir,
-		MLURL: ml.URL, ClipModel: "ViT-B-32__openai", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}
+		MLURL: ml.URL, ClipModel: "ViT-B-32__openai", OCRModel: "PP-OCRv5_mobile", FaceMinScore: 0.7,
+		FaceMatchThreshold: 0.5}
 	if exiftool == "" {
 		cfg.ExiftoolPath = "/nonexistent"
 	}
@@ -664,6 +665,15 @@ func TestWebClientShowAndPlaces(t *testing.T) {
 		http.StatusBadRequest), &errResp))
 	assert.Equal(t, "fs.search.show_unavailable", errResp["message"])
 	ml.Down.Store(false)
+
+	// Visible text, with the line that matched.
+	res = search("text:blue", http.StatusOK)
+	assert.ElementsMatch(t, []string{"blue.jpg", "red-blue.jpg"}, names(res))
+	for _, r := range res {
+		assert.Equal(t, "Blue sign", r["text"])
+	}
+	assert.ElementsMatch(t, []string{"red.jpg", "red-blue.jpg"}, names(search(`text:"red sign"`, http.StatusOK)))
+	assert.Nil(t, search("show:red", http.StatusOK)[0]["text"])
 
 	// Places.
 	page := string(get(webClientFilesPath, http.StatusOK))

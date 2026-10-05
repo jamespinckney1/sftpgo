@@ -116,27 +116,8 @@ func ParseQuery(q string) (Query, error) {
 			err = res.addIsFilter(tok, strings.ToLower(value))
 		case "larger", "smaller":
 			err = res.addSizeFilter(tok, strings.ToLower(key), value)
-		case "person", "who":
-			value = strings.TrimSpace(value)
-			if value == "" {
-				err = fmt.Errorf("invalid filter %q, use person:name", tok)
-			}
-			res.PersonTerms = append(res.PersonTerms, value)
-			res.Photo = true
-		case "place", "where":
-			value = strings.TrimSpace(value)
-			if value == "" {
-				err = fmt.Errorf("invalid filter %q, use place:name", tok)
-			}
-			res.filter.placeTerms = append(res.filter.placeTerms, value)
-			res.Photo = true
-		case "show", "pictured":
-			value = strings.TrimSpace(value)
-			if value == "" {
-				err = fmt.Errorf("invalid filter %q, use show:description", tok)
-			}
-			res.Show = strings.TrimSpace(res.Show + " " + value)
-			res.Photo = true
+		case "person", "who", "place", "where", "text", "says", "show", "pictured":
+			err = res.addPhotoTerm(strings.ToLower(key), tok, value)
 		case "sort":
 			if !strings.EqualFold(value, "size") {
 				err = fmt.Errorf("invalid sort %q, use sort:size", tok)
@@ -154,6 +135,36 @@ func ParseQuery(q string) (Query, error) {
 	res.filter.maxSize = res.MaxSize
 	res.filter.sortBySize = res.SortBySize
 	return res, nil
+}
+
+// photoTermHints are what the photo terms expect, for error messages.
+var photoTermHints = map[string]string{
+	"person": "name", "who": "name", "place": "name", "where": "name",
+	"text": "words", "says": "words", "show": "description", "pictured": "description",
+}
+
+// addPhotoTerm adds a "person:", "place:", "text:" or "show:" term, or one
+// of their aliases.
+func (q *Query) addPhotoTerm(key, tok, value string) error {
+	value = strings.TrimSpace(value)
+	if key == "text" || key == "says" {
+		value = normalizeText(value)
+	}
+	if value == "" {
+		return fmt.Errorf("invalid filter %q, use %s:%s", tok, key, photoTermHints[key])
+	}
+	q.Photo = true
+	switch key {
+	case "person", "who":
+		q.PersonTerms = append(q.PersonTerms, value)
+	case "place", "where":
+		q.filter.placeTerms = append(q.filter.placeTerms, value)
+	case "text", "says":
+		q.filter.visibleTerms = append(q.filter.visibleTerms, value)
+	default:
+		q.Show = strings.TrimSpace(q.Show + " " + value)
+	}
+	return nil
 }
 
 // splitQuery splits a query on spaces, except inside double quotes, which

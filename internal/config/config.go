@@ -2253,6 +2253,7 @@ func setViperDefaults() {
 	viper.SetDefault("httpd.photo_index.map_tile_url", globalConf.HTTPDConfig.PhotoIndex.MapTileURL)
 	viper.SetDefault("httpd.photo_index.ml_url", globalConf.HTTPDConfig.PhotoIndex.MLURL)
 	viper.SetDefault("httpd.photo_index.clip_model", globalConf.HTTPDConfig.PhotoIndex.ClipModel)
+	viper.SetDefault("httpd.photo_index.ocr_model", globalConf.HTTPDConfig.PhotoIndex.OCRModel)
 	viper.SetDefault("httpd.photo_index.face_model", globalConf.HTTPDConfig.PhotoIndex.FaceModel)
 	viper.SetDefault("httpd.photo_index.face_min_score", globalConf.HTTPDConfig.PhotoIndex.FaceMinScore)
 	viper.SetDefault("httpd.photo_index.face_match_threshold", globalConf.HTTPDConfig.PhotoIndex.FaceMatchThreshold)

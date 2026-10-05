@@ -41,6 +41,12 @@ const (
 	mlTaskClip        = "clip"
 	mlTypeVisual      = "visual"
 	mlTypeTextual     = "textual"
+	mlTaskOCR         = "ocr"
+	// ocrMinDetectionScore, ocrMinRecognitionScore and ocrMaxResolution are
+	// the defaults of Immich. The resolution applies to the shorter side.
+	ocrMinDetectionScore   = 0.5
+	ocrMinRecognitionScore = 0.8
+	ocrMaxResolution       = 736
 	// mlTimeout is generous: the first request downloads the models.
 	mlTimeout = 10 * time.Minute
 )
@@ -65,22 +71,32 @@ type MLResult struct {
 	Faces         []MLFace
 	// Clip is the CLIP image embedding, normalized, if requested.
 	Clip []float32
+	// Text is the text read in the image, one line per text box, in reading
+	// order, if requested.
+	Text []string
+}
+
+// mlTasks are the analyses requested for an image.
+type mlTasks struct {
+	faces, clip, ocr bool
 }
 
 type mlClient struct {
 	url       string
 	faceModel string // empty disables face recognition
 	clipModel string // empty disables "things pictured"
+	ocrModel  string // empty disables "visible text"
 	minScore  float64
 	client    *http.Client
 }
 
-func newMLClient(url, faceModel, clipModel string, minScore float64) *mlClient {
+func newMLClient(url string, cfg Config) *mlClient {
 	return &mlClient{
 		url:       strings.TrimSuffix(url, "/"),
-		faceModel: faceModel,
-		clipModel: clipModel,
-		minScore:  minScore,
+		faceModel: cfg.FaceModel,
+		clipModel: cfg.ClipModel,
+		ocrModel:  cfg.OCRModel,
+		minScore:  cfg.FaceMinScore,
 		client:    &http.Client{Timeout: mlTimeout},
 	}
 }
@@ -104,14 +120,14 @@ func (c *mlClient) ping(ctx context.Context) error {
 
 // detectFaces sends a JPEG to the service and returns the faces found.
 func (c *mlClient) detectFaces(ctx context.Context, jpeg []byte) (MLResult, error) {
-	return c.analyze(ctx, jpeg, true, false)
+	return c.analyze(ctx, jpeg, mlTasks{faces: true})
 }
 
 // analyze sends a JPEG to the service, asking in a single request for the
-// faces and/or the CLIP embedding.
-func (c *mlClient) analyze(ctx context.Context, jpeg []byte, faces, clip bool) (MLResult, error) {
+// faces, the CLIP embedding and/or the text.
+func (c *mlClient) analyze(ctx context.Context, jpeg []byte, tasks mlTasks) (MLResult, error) {
 	entries := map[string]any{}
-	if faces {
+	if tasks.faces {
 		entries[mlTaskFaces] = map[string]any{
 			mlTypeDetection: map[string]any{
 				"modelName": c.faceModel,
@@ -120,16 +136,28 @@ func (c *mlClient) analyze(ctx context.Context, jpeg []byte, faces, clip bool) (
 			mlTypeRecognition: map[string]any{"modelName": c.faceModel},
 		}
 	}
-	if clip {
+	if tasks.clip {
 		entries[mlTaskClip] = map[string]any{
 			mlTypeVisual: map[string]any{"modelName": c.clipModel},
+		}
+	}
+	if tasks.ocr {
+		entries[mlTaskOCR] = map[string]any{
+			mlTypeDetection: map[string]any{
+				"modelName": c.ocrModel,
+				"options":   map[string]any{"minScore": ocrMinDetectionScore, "maxResolution": ocrMaxResolution},
+			},
+			mlTypeRecognition: map[string]any{
+				"modelName": c.ocrModel,
+				"options":   map[string]any{"minScore": ocrMinRecognitionScore},
+			},
 		}
 	}
 	data, err := c.predict(ctx, entries, jpeg, "")
 	if err != nil {
 		return MLResult{}, err
 	}
-	return parseMLResponse(data, clip)
+	return parseMLResponse(data, tasks)
 }
 
 // encodeText returns the CLIP embedding of a text, to compare with the image
@@ -223,15 +251,29 @@ type mlResponse struct {
 		Embedding json.RawMessage `json:"embedding"`
 		Score     float64         `json:"score"`
 	} `json:"facial-recognition"`
+	// OCR has also the boxes and scores of the lines, not used.
+	OCR *struct {
+		Text []string `json:"text"`
+	} `json:"ocr"`
 }
 
-func parseMLResponse(data []byte, wantClip bool) (MLResult, error) {
+func parseMLResponse(data []byte, tasks mlTasks) (MLResult, error) {
 	var r mlResponse
 	if err := json.Unmarshal(data, &r); err != nil {
 		return MLResult{}, fmt.Errorf("unable to parse the analysis response: %w", err)
 	}
 	res := MLResult{Width: r.ImageWidth, Height: r.ImageHeight}
-	if wantClip {
+	if tasks.ocr {
+		if r.OCR == nil {
+			return MLResult{}, errors.New("ocr: no result, the machine-learning service may be too old")
+		}
+		for _, line := range r.OCR.Text {
+			if line = strings.TrimSpace(line); line != "" {
+				res.Text = append(res.Text, line)
+			}
+		}
+	}
+	if tasks.clip {
 		clip, err := parseEmbedding(r.Clip)
 		if err != nil {
 			return MLResult{}, fmt.Errorf("clip: %w", err)

@@ -17,11 +17,13 @@ package photoindex
 import (
 	"archive/zip"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -240,4 +242,106 @@ func TestShow(t *testing.T) {
 	m.clipOn = false
 	err = m.Search([]string{root}, q, func(Media) bool { return true })
 	assert.ErrorIs(t, err, ErrShowUnavailable)
+}
+
+func TestVisibleText(t *testing.T) {
+	ml := mltest.NewServer()
+	defer ml.Close()
+	root := filepath.Join(t.TempDir(), "photos")
+	red, blue := mltest.Concepts["red"], mltest.Concepts["blue"]
+	colorPhoto(t, filepath.Join(root, "red.jpg"), red)
+	colorPhoto(t, filepath.Join(root, "2019", "red-blue.jpg"), red, blue)
+	colorPhoto(t, filepath.Join(root, "gray.jpg"))
+	facePhoto(t, filepath.Join(root, "face.jpg"), 60, 0)
+
+	cfg := Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent", MLURL: ml.URL, FaceModel: "buffalo_l",
+		ClipModel: "ViT-B-32__openai", OCRModel: "PP-OCRv5_mobile", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}
+	m := newTestManager(t, root, cfg)
+	require.True(t, m.OCREnabled())
+	m.refreshRoots()
+	m.enqueueTree(root)
+	drain(t, m)
+	require.NoError(t, m.loadClusters())
+	n, err := m.mlBatch()
+	require.NoError(t, err)
+	assert.Equal(t, 4, n)
+	assert.Equal(t, int64(4), ml.Requests.Load(), "one request per photo for faces, CLIP and text")
+	assert.Zero(t, m.faceStatus().Pending)
+	assert.True(t, m.faceStatus().Text)
+
+	// The face (a red square) is read as a red sign too.
+	assert.ElementsMatch(t, []string{"red.jpg", "red-blue.jpg", "face.jpg"}, searchNames(t, m, root, "text:red"))
+	assert.ElementsMatch(t, []string{"red.jpg", "red-blue.jpg", "face.jpg"}, searchNames(t, m, root, `text:"RED  Sign"`))
+	assert.Equal(t, []string{"red-blue.jpg"}, searchNames(t, m, root, "text:red text:blue"))
+	assert.Equal(t, []string{"red-blue.jpg"}, searchNames(t, m, root, "says:blue"))
+	assert.Equal(t, []string{"red-blue.jpg"}, searchNames(t, m, filepath.Join(root, "2019"), "text:sign"))
+	assert.Empty(t, searchNames(t, m, root, `text:"red blue"`))
+	assert.Empty(t, searchNames(t, m, root, "text:green"))
+	var text string
+	require.NoError(t, m.store.db.QueryRow(`SELECT ocr_text FROM media WHERE path = ?`,
+		filepath.Join(root, "2019", "red-blue.jpg")).Scan(&text))
+	assert.Equal(t, "Blue sign\nRed sign", text)
+	err = m.Search([]string{root}, mustParse(t, "text:blue"), func(rec Media) bool {
+		assert.Equal(t, "Blue sign", rec.MatchedText)
+		return true
+	})
+	require.NoError(t, err)
+	_, err = ParseQuery("text:")
+	assert.Error(t, err)
+
+	// A modified photo is read again.
+	colorPhoto(t, filepath.Join(root, "gray.jpg"), blue)
+	m.enqueueTree(root)
+	drain(t, m)
+	_, err = m.mlBatch()
+	require.NoError(t, err)
+	assert.Contains(t, searchNames(t, m, root, "text:blue"), "gray.jpg")
+
+	// A service too old to read text: the other analyses go on, and text
+	// reading is turned off after a few photos.
+	ml.NoOCR.Store(true)
+	for i := range 4 {
+		facePhoto(t, filepath.Join(root, "new", fmt.Sprintf("face%d.jpg", i)), 60, 1)
+	}
+	m.enqueueTree(root)
+	drain(t, m)
+	_, err = m.mlBatch()
+	require.NoError(t, err)
+	assert.False(t, m.OCREnabled())
+	assert.Zero(t, m.faceStatus().Pending)
+	assert.Equal(t, int64(4), m.store.count(`SELECT COUNT(*) FROM faces f JOIN media m ON m.id = f.media_id
+		WHERE m.path LIKE ?`, filepath.Join(root, "new")+"/%"), "faces are found without the text")
+	err = m.Search([]string{root}, mustParse(t, "text:red"), func(Media) bool { return true })
+	assert.ErrorIs(t, err, ErrTextUnavailable)
+
+	// After an upgrade and a restart, the photos that failed are read.
+	ml.NoOCR.Store(false)
+	m.ocrOn.Store(true)
+	m.ocrFailures.Store(0)
+	require.NoError(t, m.checkModels())
+	assert.Equal(t, int64(4), m.faceStatus().Pending, "the photos marked as failed are retried")
+	_, err = m.mlBatch()
+	require.NoError(t, err)
+	assert.Zero(t, m.faceStatus().Pending)
+
+	// A new model reads every photo again.
+	m.cfg.OCRModel = "EN__PP-OCRv5_mobile"
+	require.NoError(t, m.checkModels())
+	assert.Equal(t, int64(8), m.faceStatus().Pending)
+}
+
+func mustParse(t *testing.T, q string) Query {
+	t.Helper()
+	res, err := ParseQuery(q)
+	require.NoError(t, err)
+	return res
+}
+
+func TestMatchedLine(t *testing.T) {
+	text := "OPEN HOUSE\nSunday 2-4 PM\nCall 555-0100"
+	assert.Equal(t, "Sunday 2-4 PM", matchedLine(text, []string{"sunday"}))
+	assert.Equal(t, "OPEN HOUSE", matchedLine(text, []string{"open house"}))
+	assert.Equal(t, "OPEN HOUSE", matchedLine(text, []string{"house sunday"}), "a match across lines shows the start")
+	long := strings.Repeat("x", 100)
+	assert.Len(t, []rune(matchedLine(long, []string{"x"})), 80)
 }
