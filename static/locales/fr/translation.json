@@ -702,7 +702,8 @@
         "token_invalid": "Jeton OpenID invalide",
         "role_admin_err": "Rôle OpenID incorrect, l'utilisateur connecté n'est pas un administrateur",
         "role_user_err": "Rôle OpenID incorrect, l'utilisateur connecté est un administrateur",
-        "get_user_err": "Échec de la récupération de l'utilisateur associé au jeton OpenID"
+        "get_user_err": "Échec de la récupération de l'utilisateur associé au jeton OpenID",
+        "login_retry": "La connexion a pris trop de temps ou a déjà été utilisée, veuillez vous reconnecter"
     },
     "oauth2": {
         "auth_verify_error": "Impossible de vérifier le code OAuth2",

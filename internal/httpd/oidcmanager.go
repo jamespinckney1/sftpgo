@@ -83,7 +83,7 @@ func (o *memoryOIDCManager) getPendingAuth(state string) (oidcPendingAuth, error
 		return oidcPendingAuth{}, errors.New("oidc: no auth request found for the specified state")
 	}
 	diff := util.GetTimeAsMsSinceEpoch(time.Now()) - authReq.IssuedAt
-	if diff > authStateValidity {
+	if diff > oidcAuthStateValidity {
 		return oidcPendingAuth{}, errors.New("oidc: auth request is too old")
 	}
 	return authReq, nil
@@ -137,7 +137,7 @@ func (o *memoryOIDCManager) cleanupAuthRequests() {
 	for k, auth := range o.pendingAuths {
 		diff := util.GetTimeAsMsSinceEpoch(time.Now()) - auth.IssuedAt
 		// remove old pending auth requests
-		if diff < 0 || diff > authStateValidity {
+		if diff < 0 || diff > oidcAuthStateValidity {
 			delete(o.pendingAuths, k)
 		}
 	}
@@ -163,7 +163,7 @@ func (o *dbOIDCManager) addPendingAuth(pendingAuth oidcPendingAuth) {
 		Key:       pendingAuth.State,
 		Data:      pendingAuth,
 		Type:      dataprovider.SessionTypeOIDCAuth,
-		Timestamp: pendingAuth.IssuedAt + authStateValidity,
+		Timestamp: pendingAuth.IssuedAt + oidcAuthStateValidity,
 	}
 	dataprovider.AddSharedSession(session) //nolint:errcheck
 }

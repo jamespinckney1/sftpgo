@@ -150,22 +150,36 @@ func TestOIDCLoginLogout(t *testing.T) {
 	r, err := http.NewRequest(http.MethodGet, webOIDCRedirectPath, nil)
 	assert.NoError(t, err)
 	server.router.ServeHTTP(rr, r)
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Contains(t, rr.Body.String(), util.I18nInvalidAuth)
+	// Fork: an unknown or expired login goes back to the login page.
+	assert.Equal(t, http.StatusFound, rr.Code)
+	assert.Equal(t, webClientLoginPath, rr.Header().Get("Location"))
+
+	// A login may take 10 minutes, e.g. waiting for a one-time code by email.
+	slowAuthReq := oidcPendingAuth{
+		State:    util.GenerateOpaqueString(),
+		Nonce:    util.GenerateOpaqueString(),
+		Audience: tokenAudienceWebClient,
+		IssuedAt: util.GetTimeAsMsSinceEpoch(time.Now().Add(-10 * time.Minute)),
+	}
+	oidcMgr.addPendingAuth(slowAuthReq)
+	_, err = oidcMgr.getPendingAuth(slowAuthReq.State)
+	assert.NoError(t, err)
+	oidcMgr.removePendingAuth(slowAuthReq.State)
 
 	expiredAuthReq := oidcPendingAuth{
 		State:    util.GenerateOpaqueString(),
 		Nonce:    util.GenerateOpaqueString(),
 		Audience: tokenAudienceWebClient,
-		IssuedAt: util.GetTimeAsMsSinceEpoch(time.Now().Add(-10 * time.Minute)),
+		IssuedAt: util.GetTimeAsMsSinceEpoch(time.Now().Add(-20 * time.Minute)),
 	}
 	oidcMgr.addPendingAuth(expiredAuthReq)
 	rr = httptest.NewRecorder()
 	r, err = http.NewRequest(http.MethodGet, webOIDCRedirectPath+"?state="+expiredAuthReq.State, nil)
 	assert.NoError(t, err)
 	server.router.ServeHTTP(rr, r)
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Contains(t, rr.Body.String(), util.I18nInvalidAuth)
+	assert.Equal(t, http.StatusFound, rr.Code)
+	assert.Equal(t, webClientLoginPath, rr.Header().Get("Location"))
+	assert.Contains(t, rr.Header().Get("Set-Cookie"), "message=", "the login page explains what happened")
 	oidcMgr.removePendingAuth(expiredAuthReq.State)
 
 	server.binding.OIDC.oauth2Config = &mockOAuth2Config{
@@ -1248,7 +1262,7 @@ func TestMemoryOIDCManager(t *testing.T) {
 	assert.NoError(t, err)
 	oidcMgr.removePendingAuth(authReq.State)
 	require.Len(t, oidcMgr.pendingAuths, 0)
-	authReq.IssuedAt = util.GetTimeAsMsSinceEpoch(time.Now().Add(-600 * time.Second))
+	authReq.IssuedAt = util.GetTimeAsMsSinceEpoch(time.Now().Add(-20 * time.Minute))
 	oidcMgr.addPendingAuth(authReq)
 	require.Len(t, oidcMgr.pendingAuths, 1)
 	_, err = oidcMgr.getPendingAuth(authReq.State)

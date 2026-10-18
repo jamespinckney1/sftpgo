@@ -38,9 +38,14 @@ import (
 )
 
 const (
-	oidcCookieKey          = "oidc"
-	adminRoleFieldValue    = "admin"
-	authStateValidity      = 2 * 60 * 1000 // 2 minutes
+	oidcCookieKey       = "oidc"
+	adminRoleFieldValue = "admin"
+	authStateValidity   = 2 * 60 * 1000 // 2 minutes
+	// oidcAuthStateValidity (fork) is how long an OpenID Connect login may
+	// take: entering a one-time code received by email, or approving the login
+	// on a phone, often takes more than the upstream 2 minutes. The state is
+	// random and single use, and PKCE protects the code exchange.
+	oidcAuthStateValidity  = 15 * 60 * 1000 // 15 minutes
 	maxWebClientNextLength = 4096
 	tokenUpdateInterval    = 3 * 60 * 1000   // 3 minutes
 	tokenDeleteInterval    = 2 * 3600 * 1000 // 2 hours
@@ -693,10 +698,15 @@ func (s *httpdServer) handleOIDCRedirect(w http.ResponseWriter, r *http.Request)
 	state := r.URL.Query().Get("state")
 	authReq, err := oidcMgr.getPendingAuth(state)
 	if err != nil {
-		logger.Debug(logSender, "", "oidc authentication state did not match")
+		// Fork: the login took too long, was already completed (e.g. the page
+		// was reloaded) or SFTPGo restarted meanwhile: back to the login page
+		// instead of a dead end.
+		logger.Info(logSender, "", "oidc login from %q rejected, the user is asked to log in again: %v",
+			util.GetIPFromRemoteAddress(r.RemoteAddr), err)
 		oidcMgr.removePendingAuth(state)
-		s.renderClientMessagePage(w, r, util.I18nInvalidAuthReqTitle, http.StatusBadRequest,
-			util.NewI18nError(err, util.I18nInvalidAuth), "")
+		setFlashMessage(w, r, newFlashMessage("The sign-in took too long or was already used, please sign in again",
+			util.I18nOIDCLoginRetry))
+		http.Redirect(w, r, webClientLoginPath, http.StatusFound)
 		return
 	}
 	oidcMgr.removePendingAuth(state)

@@ -188,6 +188,7 @@ const (
 	I18nOIDCTokenInvalidRoleAdmin      = "oidc.role_admin_err"
 	I18nOIDCTokenInvalidRoleUser       = "oidc.role_user_err"
 	I18nOIDCErrGetUser                 = "oidc.get_user_err"
+	I18nOIDCLoginRetry                 = "oidc.login_retry"
 	I18nErrorInvalidQuotaSize          = "user.invalid_quota_size"
 	I18nErrorTimeOfDayInvalid          = "user.time_of_day_invalid"
 	I18nErrorTimeOfDayConflict         = "user.time_of_day_conflict"
