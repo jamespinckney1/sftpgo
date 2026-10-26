@@ -747,7 +747,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             if (!thumbKind(row)) {
                 return iconHTML;
             }
-            return `<img src="${thumbnailSrc(row)}" loading="lazy" class="dt-thumb me-4"
+            return `<img data-throttle-src="${thumbnailSrc(row)}" class="dt-thumb me-4"
                          data-fallback-icon="${iconName}" alt="">`;
         }
 
@@ -794,7 +794,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 let thumbInner;
                 if (kind) {
                     let fallbackIcon = isFolder ? "ki-folder" : "ki-file";
-                    thumbInner = `<img src="${thumbnailSrc(row)}" loading="lazy" class="dt-thumb-lg" data-fallback-icon="${fallbackIcon}" alt="">`;
+                    thumbInner = `<img data-throttle-src="${thumbnailSrc(row)}" class="dt-thumb-lg" data-fallback-icon="${fallbackIcon}" alt="">`;
                 } else {
                     let icon = isFolder ? "ki-folder" : (row["size"] === "" ? "ki-file-right" : "ki-file");
                     thumbInner = `<i class="ki-duotone ${icon} dt-grid-icon text-primary"><i class="path1"></i><i class="path2"></i></i>`;
@@ -806,6 +806,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                         </div>`;
             }
             grid.innerHTML = html;
+            ThrottledImages.observe(grid);
         }
 
         function applyViewMode() {
@@ -1304,6 +1305,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 $('#file_manager_list_container').removeClass("d-none");
                 //{{- end}}
                 KTMenu.createInstances();
+                ThrottledImages.observe(document.getElementById('file_manager_list_body'));
 
                 let targets = document.querySelectorAll('#file_manager_list_body tr');
                 if (targets) {

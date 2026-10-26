@@ -203,7 +203,7 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             let name = p.name ? `<div class="person-name" title="${attr(p.name)}">${escapeHTML(p.name)}</div>` :
                 `<div class="person-name unnamed">${escapeHTML($.t('people.unnamed'))}</div>`;
             return `<div class="person-card ${p.hidden ? 'is-hidden' : ''}" data-id="${p.id}">
-                        <img loading="lazy" src="${FACE_URL}?id=${p.cover}" alt="">
+                        <img data-throttle-src="${FACE_URL}?id=${p.cover}" alt="">
                         ${name}
                         <div class="text-muted fs-7">${escapeHTML($.t('people.photo_count', { count: p.photos }))}</div>
                     </div>`;
@@ -222,6 +222,8 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
             let unnamed = filter ? [] : visible.filter(p => !p.name);
             $('#people_named').html(named.map(personCard).join(""));
             $('#people_unnamed').html(unnamed.slice(0, shown).map(personCard).join(""));
+            ThrottledImages.observe(document.getElementById('people_named'));
+            ThrottledImages.observe(document.getElementById('people_unnamed'));
             $('#people_named_title').toggleClass('d-none', named.length == 0);
             $('#people_unnamed_title, #people_unnamed_help').toggleClass('d-none', unnamed.length == 0);
             $('#people_more').toggleClass('d-none', unnamed.length <= shown);
@@ -288,11 +290,12 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                                 <div class="form-check form-check-sm form-check-custom form-check-solid">
                                     <input class="form-check-input" type="checkbox" />
                                 </div>
-                                <img loading="lazy" src="${FACE_URL}?id=${f.id}" alt="">
+                                <img data-throttle-src="${FACE_URL}?id=${f.id}" alt="">
                                 <div class="face-file"><a href="${attr(f.dir_url)}" title="${attr(f.path + '/' + f.name)}">${escapeHTML(f.name)}</a></div>
                             </div>`;
                 }).join("");
                 $('#faces_grid').html(html);
+                ThrottledImages.observe(document.getElementById('faces_grid'));
             }).catch(function (err) {
                 showError(err);
                 showListView();

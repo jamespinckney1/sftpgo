@@ -76,6 +76,69 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
         return div.innerHTML;
     }
 
+    // Fork: ThrottledImages loads <img data-throttle-src="..."> a few at a
+    // time, as they come near the screen. A page with thousands of thumbnails
+    // (a person's faces, a big folder) would otherwise send dozens of requests
+    // at once, slow to answer on a small server, and trip SFTPGo's limit of
+    // simultaneous connections per IP address, which blocks the address.
+    var ThrottledImages = (function () {
+        const MAX_ACTIVE = 6;
+        let active = 0;
+        let queue = [];
+        let observer = null;
+        if ('IntersectionObserver' in window) {
+            observer = new IntersectionObserver(function (entries) {
+                entries.forEach(function (e) {
+                    if (e.isIntersecting) {
+                        observer.unobserve(e.target);
+                        queue.push(e.target);
+                    }
+                });
+                pump();
+            }, { rootMargin: '300px' });
+        }
+
+        function pump() {
+            while (active < MAX_ACTIVE && queue.length) {
+                let img = queue.shift();
+                let src = img.dataset.throttleSrc;
+                if (!src || !img.isConnected) {
+                    continue;
+                }
+                delete img.dataset.throttleSrc;
+                active++;
+                let finished = false;
+                let done = function () {
+                    if (finished) {
+                        return;
+                    }
+                    finished = true;
+                    active--;
+                    pump();
+                };
+                img.addEventListener('load', done, { once: true });
+                img.addEventListener('error', done, { once: true });
+                // Never let a lost event stall the queue.
+                setTimeout(done, 30000);
+                img.src = src;
+            }
+        }
+
+        // observe queues the images waiting to be loaded inside root.
+        function observe(root) {
+            (root || document).querySelectorAll('img[data-throttle-src]').forEach(function (img) {
+                if (observer) {
+                    observer.observe(img);
+                } else {
+                    queue.push(img);
+                }
+            });
+            pump();
+        }
+
+        return { observe: observe };
+    })();
+
     function fileSizeIEC(bytes){
         const thresh = 1024;
         if (bytes < thresh){
