@@ -1194,7 +1194,8 @@
         "not_found": "Person nicht gefunden, die Liste hat sich vielleicht geändert",
         "saved": "Gespeichert",
         "merge_confirm": "\"{{name}}\" existiert bereits. Diese Gesichter mit {{name}} zusammenführen?",
-        "merge": "Zusammenführen"
+        "merge": "Zusammenführen",
+        "page_expired": "Diese Seite ist veraltet (SFTPGo wurde neu gestartet oder sie war stundenlang geöffnet), daher wurde die Änderung nicht gespeichert. Laden Sie die Seite neu und versuchen Sie es erneut."
     },
     "places": {
         "filter": "Orte filtern",

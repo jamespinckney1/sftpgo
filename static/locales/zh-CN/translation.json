@@ -1194,7 +1194,8 @@
         "not_found": "未找到此人物，列表可能已更改",
         "saved": "已保存",
         "merge_confirm": "“{{name}}”已存在。将这些人脸合并到 {{name}}？",
-        "merge": "合并"
+        "merge": "合并",
+        "page_expired": "此页面已过期（SFTPGo 已重启，或页面已打开数小时），因此更改未保存。请重新加载页面后重试。"
     },
     "places": {
         "filter": "筛选地点",

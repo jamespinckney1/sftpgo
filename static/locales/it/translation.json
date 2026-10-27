@@ -1194,7 +1194,8 @@
         "not_found": "Persona non trovata, l'elenco potrebbe essere cambiato",
         "saved": "Salvato",
         "merge_confirm": "\"{{name}}\" esiste già. Unire questi volti a {{name}}?",
-        "merge": "Unisci"
+        "merge": "Unisci",
+        "page_expired": "Questa pagina non è aggiornata (SFTPGo è stato riavviato o era aperta da ore), quindi la modifica non è stata salvata. Ricarica la pagina e riprova."
     },
     "places": {
         "filter": "Filtra luoghi",

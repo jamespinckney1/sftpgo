@@ -1194,7 +1194,8 @@
         "not_found": "This person was not found, the list may have changed",
         "saved": "Saved",
         "merge_confirm": "\"{{name}}\" already exists. Merge these faces into {{name}}?",
-        "merge": "Merge"
+        "merge": "Merge",
+        "page_expired": "This page is out of date (SFTPGo restarted, or it was open for hours), so the change was not saved. Reload the page and try again."
     },
     "places": {
         "filter": "Filter places",

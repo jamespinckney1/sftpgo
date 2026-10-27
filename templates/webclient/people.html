@@ -190,6 +190,20 @@ explicit grant from the SFTPGo Team (support@sftpgo.com).
                 window.location.reload();
                 return;
             }
+            // The page's form token was refused: it expired (4 hours) or SFTPGo
+            // restarted since the page was loaded. Real permission errors come
+            // as plain text, not JSON.
+            if (status == 403 && err.response.data && typeof err.response.data === 'object') {
+                ModalAlert.fire({
+                    text: $.t('people.page_expired'),
+                    icon: "info",
+                    confirmButtonText: $.t('general.ok'),
+                    customClass: { confirmButton: "btn btn-primary" }
+                }).then(function () {
+                    window.location.reload();
+                });
+                return;
+            }
             let msg = "general.error500";
             if (status == 404) {
                 msg = "people.not_found";

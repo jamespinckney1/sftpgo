@@ -1194,7 +1194,8 @@
         "not_found": "Personne introuvable, la liste a peut-être changé",
         "saved": "Enregistré",
         "merge_confirm": "« {{name}} » existe déjà. Fusionner ces visages avec {{name}} ?",
-        "merge": "Fusionner"
+        "merge": "Fusionner",
+        "page_expired": "Cette page n'est plus à jour (SFTPGo a redémarré ou elle était ouverte depuis des heures), la modification n'a donc pas été enregistrée. Rechargez la page et réessayez."
     },
     "places": {
         "filter": "Filtrer les lieux",
