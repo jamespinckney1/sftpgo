@@ -152,13 +152,18 @@ func (s *UserScope) VirtualPath(fsPath string) (string, bool) {
 	return "", false
 }
 
-// Visible reports whether the user can see the file at virtual path vPath in a
-// directory listing.
+// Visible reports whether the user may see what the photo index knows about
+// the file at virtual path vPath: it must be listed in its directory and the
+// user must be allowed to download it. Search results, thumbnails, faces,
+// people and places all show the content of the photo, so a file the user
+// can only see the name of (list without download permission, or denied by a
+// file pattern with any policy) is left out.
 func (s *UserScope) Visible(vPath string) bool {
-	if !s.user.HasPerm(dataprovider.PermListItems, path.Dir(vPath)) {
+	dir := path.Dir(vPath)
+	if !s.user.HasPerm(dataprovider.PermListItems, dir) || !s.user.HasPerm(dataprovider.PermDownload, dir) {
 		return false
 	}
-	if ok, policy := s.user.IsFileAllowed(vPath); !ok && policy == sdk.DenyPolicyHide {
+	if ok, _ := s.user.IsFileAllowed(vPath); !ok {
 		return false
 	}
 	return true

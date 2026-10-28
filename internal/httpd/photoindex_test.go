@@ -365,6 +365,7 @@ func TestWebClientPeople(t *testing.T) {
 	// Two users: the second one cannot see the first one's home.
 	u := getTestUser()
 	u.Permissions["/private"] = []string{dataprovider.PermUpload}
+	u.Permissions["/names"] = []string{dataprovider.PermListItems} // file names only, no download
 	user, _, err := httpdtest.AddUser(u, http.StatusCreated)
 	require.NoError(t, err)
 	u2 := getTestUser()
@@ -389,13 +390,14 @@ func TestWebClientPeople(t *testing.T) {
 	write(filepath.Join(home, "a.jpg"), facePhotoJPEG(t, red, blue))
 	write(filepath.Join(home, "b.jpg"), facePhotoJPEG(t, red))
 	write(filepath.Join(home, "private", "c.jpg"), facePhotoJPEG(t, green)) // not listable by user
+	write(filepath.Join(home, "names", "e.jpg"), facePhotoJPEG(t, red))     // listable, not downloadable
 	write(filepath.Join(home2, "d.jpg"), facePhotoJPEG(t, red, green))
 
 	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent",
-		MLURL: ml.URL, FaceModel: "buffalo_l", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}, []string{home, home2}, 4)
+		MLURL: ml.URL, FaceModel: "buffalo_l", FaceMinScore: 0.7, FaceMatchThreshold: 0.5}, []string{home, home2}, 5)
 	require.Eventually(t, func() bool {
 		st := photoindex.Get().Status().Faces
-		return st.Pending == 0 && st.Faces == 6
+		return st.Pending == 0 && st.Faces == 7
 	}, 30*time.Second, 100*time.Millisecond)
 
 	token1, err := getJWTWebClientTokenFromTestServer(defaultUsername, defaultPassword)
@@ -495,6 +497,21 @@ func TestWebClientPeople(t *testing.T) {
 	get(token2, webClientPeoplePath+"/face?id="+strconv.FormatInt(faces.Faces[0].ID, 10), http.StatusNotFound)
 	get(token1, webClientPeoplePath+"/faces?id="+strconv.FormatInt(greenID, 10), http.StatusNotFound)
 
+	// A photo the user can list but not download shows nothing: not in the
+	// person's photos (red has 2 above, not 3), not its face, not its thumbnail.
+	allFaces, err := photoindex.Get().PersonFaces(redID, func(string) bool { return true })
+	require.NoError(t, err)
+	var namesFace int64
+	for _, f := range allFaces {
+		if filepath.Base(f.Path) == "e.jpg" {
+			namesFace = f.ID
+		}
+	}
+	require.NotZero(t, namesFace)
+	get(token1, webClientPeoplePath+"/face?id="+strconv.FormatInt(namesFace, 10), http.StatusNotFound)
+	get(token1, webClientThumbnailPath+"?path="+url.QueryEscape("/names/e.jpg"), http.StatusNotFound)
+	get(token1, webClientThumbnailPath+"?path="+url.QueryEscape("/a.jpg"), http.StatusOK)
+
 	// Naming, searching, merging by name.
 	assert.Equal(t, redID, action(map[string]any{"action": "rename", "person_id": redID, "name": "Grandma Rose"}, http.StatusOK))
 	action(map[string]any{"action": "rename", "person_id": blueID, "name": " "}, http.StatusBadRequest)
@@ -511,7 +528,7 @@ func TestWebClientPeople(t *testing.T) {
 		}
 		return names
 	}
-	assert.ElementsMatch(t, []string{"a.jpg", "b.jpg"}, searchPeople(token1, "person:rose"))
+	assert.ElementsMatch(t, []string{"a.jpg", "b.jpg"}, searchPeople(token1, "person:rose"), "not names/e.jpg")
 	assert.ElementsMatch(t, []string{"d.jpg"}, searchPeople(token2, `person:"grandma rose"`), "names are shared")
 	assert.ElementsMatch(t, []string{"a.jpg"}, searchPeople(token1, "person:#"+strconv.FormatInt(blueID, 10)))
 
@@ -547,7 +564,7 @@ func TestWebClientPeople(t *testing.T) {
 	checkResponseCode(t, http.StatusForbidden, rr)
 
 	// Disabled face recognition: no page.
-	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"}, []string{home, home2}, 4)
+	startTestPhotoIndex(t, photoindex.Config{ExiftoolPath: "/nonexistent", VipsPath: "/nonexistent"}, []string{home, home2}, 5)
 	get(token1, webClientPeoplePath, http.StatusNotFound)
 	assert.NotContains(t, string(get(token1, webClientFilesPath, http.StatusOK)), `href="`+webClientPeoplePath+`"`)
 }

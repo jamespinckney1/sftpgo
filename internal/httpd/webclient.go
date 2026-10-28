@@ -1549,6 +1549,17 @@ func (s *httpdServer) handleClientThumbnail(w http.ResponseWriter, r *http.Reque
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
+	// A thumbnail shows the file: require the same rights as a download, also
+	// for the cached thumbnails and the photo index previews, which do not
+	// open the file through the connection.
+	if !connection.User.HasPerm(dataprovider.PermDownload, path.Dir(name)) {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	if ok, _ := connection.User.IsFileAllowed(name); !ok {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
 	info, err := connection.Stat(name, 0)
 	if err != nil || info.IsDir() {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)

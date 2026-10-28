@@ -190,9 +190,13 @@ func TestUserScope(t *testing.T) {
 	user.Permissions = map[string][]string{
 		"/":        {dataprovider.PermAny},
 		"/private": {dataprovider.PermUpload},
+		// Names only: listed, not downloadable.
+		"/names": {dataprovider.PermListItems},
 	}
 	user.Filters.FilePatterns = []sdk.PatternsFilter{
 		{Path: "/", DeniedPatterns: []string{"*.secret.jpg"}, DenyPolicy: sdk.DenyPolicyHide},
+		// Listed but not downloadable (default policy).
+		{Path: "/scans", DeniedPatterns: []string{"*.raw.jpg"}, DenyPolicy: sdk.DenyPolicyDefault},
 	}
 	user.VirtualFolders = []vfs.VirtualFolder{
 		{
@@ -229,6 +233,10 @@ func TestUserScope(t *testing.T) {
 	assert.True(t, s.Visible("/2023/a.jpg"))
 	assert.False(t, s.Visible("/private/e.jpg"))
 	assert.False(t, s.Visible("/2023/x.secret.jpg"))
+	assert.False(t, s.Visible("/names/c.jpg"), "list without download permission")
+	assert.False(t, s.Visible("/names/sub/d.jpg"), "inherited by subfolders")
+	assert.False(t, s.Visible("/scans/y.raw.jpg"), "denied pattern, default policy")
+	assert.True(t, s.Visible("/scans/y.jpg"))
 
 	// Scoped to a subdirectory of the virtual folder.
 	s = NewUserScope(user, "/Family/trip")
