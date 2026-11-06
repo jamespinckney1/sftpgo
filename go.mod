@@ -33,7 +33,7 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jlaffaye/ftp v0.2.0
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.20.2
 	github.com/lithammer/shortuuid/v4 v4.2.0
 	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/mhale/smtpd v0.8.3
